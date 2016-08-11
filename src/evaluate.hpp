@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -31,48 +31,50 @@
 #include "position.hpp"
 #include "util/alignedAlloc.hpp"
 
+class EvaluateTest;
+
 /** Position evaluation routines. */
 class Evaluate {
+    friend class EvaluateTest;
 private:
     struct PawnHashData {
         PawnHashData();
         U64 key;
-        int score;            // Positive score means good for white
-        short passedBonusW;
-        short passedBonusB;
-        U64 passedPawnsW;     // The most advanced passed pawns for each file
-        U64 passedPawnsB;
-        U64 outPostsW;        // Possible outpost squares for white
+        S16 current;        // For hash replacement policy
+        S16 score;          // Positive score means good for white
+        S16 passedBonusW;
+        S16 passedBonusB;
+        U64 passedPawns;    // The most advanced passed pawns for each file
+                            // Contains both white and black pawns
+        U64 outPostsW;      // Possible outpost squares for white
         U64 outPostsB;
+        U64 stalePawns;     // Pawns that can not be used for "pawn breaks"
     };
 
     struct MaterialHashData {
-        MaterialHashData() : id(-1), score(0) { }
+        MaterialHashData();
         int id;
         int score;
-        short wPawnIPF, bPawnIPF;
-        short wKnightIPF, bKnightIPF;
-        short castleIPF, queenIPF;
-        short wPassedPawnIPF, bPassedPawnIPF;
-        short kingSafetyIPF;
-        short diffColorBishopIPF;
-        short wKnightOutPostIPF, bKnightOutPostIPF;
+        S16 wPawnIPF, bPawnIPF;
+        S16 wKnightIPF, bKnightIPF;
+        S16 castleIPF, queenIPF;
+        S16 wPassedPawnIPF, bPassedPawnIPF;
+        S16 kingSafetyIPF;
+        S16 diffColorBishopIPF;
+        S16 wKnightOutPostIPF, bKnightOutPostIPF;
         U8 endGame;
     };
 
     struct KingSafetyHashData {
-        KingSafetyHashData() : key((U64)-1), score(0) { }
+        KingSafetyHashData();
         U64 key;
         int score;
+        S16 current;        // For hash replacement policy
     };
 
 public:
     struct EvalHashTables {
-        EvalHashTables() {
-            pawnHash.resize(1<<16);
-            kingSafetyHash.resize(1 << 15);
-            materialHash.resize(1 << 14);
-        }
+        EvalHashTables();
         std::vector<PawnHashData> pawnHash;
         std::vector<MaterialHashData> materialHash;
         vector_aligned<KingSafetyHashData> kingSafetyHash;
@@ -97,6 +99,10 @@ public:
      */
     int evalPos(const Position& pos);
     int evalPosPrint(const Position& pos);
+
+    /** Compute "swindle" score corresponding to an evaluation score when
+     * the position is a known TB draw. */
+    static int swindleScore(int evalScore);
 
     /**
      * Interpolate between (x1,y1) and (x2,y2).
@@ -130,7 +136,11 @@ private:
     /** Score castling ability. */
     int castleBonus(const Position& pos);
 
+    PawnHashData& getPawnHashEntry(std::vector<PawnHashData>& pawnHash, U64 key);
     int pawnBonus(const Position& pos);
+
+    /** Compute set of pawns that can not participate in "pawn breaks". */
+    static U64 computeStalePawns(const Position& pos);
 
     /** Compute pawn hash data for pos. */
     void computePawnHashData(const Position& pos, PawnHashData& ph);
@@ -144,41 +154,19 @@ private:
     /** Compute knight evaluation. */
     int knightEval(const Position& pos);
 
+    /** Bonus for threatening opponent pieces. */
     int threatBonus(const Position& pos);
+
+    /** Bonus for own pieces protected by pawns. */
+    int protectBonus(const Position& pos);
 
     /** Compute king safety for both kings. */
     int kingSafety(const Position& pos);
 
+    KingSafetyHashData& getKingSafetyHashEntry(vector_aligned<KingSafetyHashData>& ksHash, U64 key);
     int kingSafetyKPPart(const Position& pos);
 
-    /** Implements special knowledge for some endgame situations.
-     * If doEval is false the position is not evaluated. Instead 1 is returned if
-     * this function has special knowledge about the current material balance, and 0
-     * is returned otherwise. */
-    template <bool doEval> int endGameEval(const Position& pos, int oldScore) const;
-
-    /** Return true if the side with the bishop can not win because the opponent
-     * has a fortress draw. */
-    template <bool whiteBishop> bool isBishopPawnDraw(const Position& pos) const;
-
-    static int kqkpEval(int wKing, int wQueen, int bKing, int bPawn, bool whiteMove, int score);
-
-    static int kpkEval(int wKing, int bKing, int wPawn, bool whiteMove);
-    static bool kpkpEval(int wKing, int bKing, int wPawn, int bPawn, int& score);
-
-    static int krkpEval(int wKing, int bKing, int bPawn, bool whiteMove, int score);
-    static int krpkrEval(int wKing, int bKing, int wPawn, int wRook, int bRook, bool whiteMove);
-    static int krpkrpEval(int wKing, int bKing, int wPawn, int wRook, int bRook, int bPawn, bool whiteMove, int score);
-
-    static int kbnkEval(int wKing, int bKing, bool darkBishop);
-
-    static int kbpkbEval(int wKing, int wBish, int wPawn, int bKing, int bBish, int score);
-    static int kbpknEval(int wKing, int wBish, int wPawn, int bKing, int bKnight, int score);
-    static int knpkbEval(int wKing, int wKnight, int wPawn, int bKing, int bBish, int score, bool wtm);
-    static int knpkEval(int wKing, int wKnight, int wPawn, int bKing, int score, bool wtm);
-
     static int castleMaskFactor[256];
-    static const int distToH1A8[8][8];
     static int knightMobScoreA[64][9];
     static U64 knightKingProtectPattern[64];
     static U64 bishopKingProtectPattern[64];
@@ -191,11 +179,7 @@ private:
 
     vector_aligned<KingSafetyHashData>& kingSafetyHash;
 
-    static const ubyte kpkTable[2*32*64*48/8];
-    static const ubyte krkpTable[2*32*48*8];
-    static const U64 krpkrTable[2*24*64];
-
-    // King safety variables
+     // King safety variables
     U64 wKingZone, bKingZone;       // Squares close to king that are worth attacking
     int wKingAttacks, bKingAttacks; // Number of attacks close to white/black king
     U64 wAttacksBB, bAttacksBB;
@@ -206,11 +190,27 @@ private:
 inline
 Evaluate::PawnHashData::PawnHashData()
     : key((U64)-1), // Non-zero to avoid collision for positions with no pawns
-      score(0),
+      current(0), score(0),
       passedBonusW(0),
       passedBonusB(0),
-      passedPawnsW(0),
-      passedPawnsB(0) {
+      passedPawns(0) {
+}
+
+inline
+Evaluate::MaterialHashData::MaterialHashData()
+    : id(-1), score(0) {
+}
+
+inline
+Evaluate::KingSafetyHashData::KingSafetyHashData()
+    : key((U64)-1), score(0), current(0) {
+}
+
+inline
+Evaluate::EvalHashTables::EvalHashTables() {
+    pawnHash.resize(1<<16);
+    kingSafetyHash.resize(1 << 15);
+    materialHash.resize(1 << 14);
 }
 
 inline int
@@ -238,6 +238,56 @@ Evaluate::materialScore(const Position& pos, bool print) {
         computeMaterialScore(pos, newMhd, print);
     mhd = &newMhd;
     return newMhd.score;
+}
+
+inline Evaluate::PawnHashData&
+Evaluate::getPawnHashEntry(std::vector<Evaluate::PawnHashData>& pawnHash, U64 key) {
+    int e0 = (int)key & (pawnHash.size() - 2);
+    int e1 = e0 + 1;
+    if (pawnHash[e0].key == key) {
+        pawnHash[e0].current = 1;
+        pawnHash[e1].current = 0;
+        return pawnHash[e0];
+    }
+    if (pawnHash[e1].key == key) {
+        pawnHash[e1].current = 1;
+        pawnHash[e0].current = 0;
+        return pawnHash[e1];
+    }
+    if (pawnHash[e0].current) {
+        pawnHash[e1].current = 1;
+        pawnHash[e0].current = 0;
+        return pawnHash[e1];
+    } else {
+        pawnHash[e0].current = 1;
+        pawnHash[e1].current = 0;
+        return pawnHash[e0];
+    }
+}
+
+inline Evaluate::KingSafetyHashData&
+Evaluate::getKingSafetyHashEntry(vector_aligned<Evaluate::KingSafetyHashData>& ksHash, U64 key) {
+    int e0 = (int)key & (ksHash.size() - 2);
+    int e1 = e0 + 1;
+    if (ksHash[e0].key == key) {
+        ksHash[e0].current = 1;
+        ksHash[e1].current = 0;
+        return ksHash[e0];
+    }
+    if (ksHash[e1].key == key) {
+        ksHash[e1].current = 1;
+        ksHash[e0].current = 0;
+        return ksHash[e1];
+    }
+    if (ksHash[e0].current) {
+        ksHash[e1].current = 1;
+        ksHash[e0].current = 0;
+        return ksHash[e1];
+    } else {
+        ksHash[e0].current = 1;
+        ksHash[e1].current = 0;
+        return ksHash[e0];
+    }
 }
 
 #endif /* EVALUATE_HPP_ */

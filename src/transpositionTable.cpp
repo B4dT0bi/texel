@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -38,10 +38,6 @@ void
 TranspositionTable::reSize(int log2Size) {
     const size_t numEntries = ((size_t)1) << log2Size;
     table.resize(numEntries);
-    TTEntry ent;
-    ent.clear();
-    for (size_t i = 0; i < numEntries; i++)
-        ent.store(table[i]);
     generation = 0;
 }
 
@@ -80,7 +76,7 @@ TranspositionTable::insert(U64 key, const Move& sm, int type, int ply, int depth
         ent->setKey(key2);
         ent->setScore(sm.score(), ply);
         ent->setDepth(depth);
-        ent->setGeneration((byte)generation);
+        ent->setGeneration((S8)generation);
         ent->setType(type);
         ent->setEvalScore(evalScore);
         ent->store(table[idx]);
@@ -105,7 +101,7 @@ TranspositionTable::extractPVMoves(const Position& rootPos, const Move& mFirst, 
         if (ent.getType() == TType::T_EMPTY)
             break;
         ent.getMove(m);
-        MoveGen::MoveList moves;
+        MoveList moves;
         MoveGen::pseudoLegalMoves(pos, moves);
         MoveGen::removeIllegal(pos, moves);
         bool contains = false;
@@ -134,7 +130,7 @@ TranspositionTable::extractPV(const Position& posIn) {
     while (ent.getType() != TType::T_EMPTY) {
         Move m;
         ent.getMove(m);
-        MoveGen::MoveList moves;
+        MoveList moves;
         MoveGen::pseudoLegalMoves(pos, moves);
         MoveGen::removeIllegal(pos, moves);
         bool valid = false;
@@ -187,7 +183,7 @@ TranspositionTable::printStats() const {
     double w = 100.0 / table.size();
     std::stringstream ss;
     ss.precision(2);
-    ss << std::fixed << "Hash stats: size:" << table.size()
+    ss << std::fixed << "hstat: size:" << table.size()
        << " unused:" << unused << " (" << (unused*w) << "%)"
        << " thisGen:" << thisGen << " (" << (thisGen*w) << "%)" << std::endl;
     cout << ss.str();
@@ -199,7 +195,7 @@ TranspositionTable::printStats() const {
             ss << std::setw(4) << i
                << ' ' << std::setw(8) << c
                << " " << std::setw(6) << std::fixed << (c*w);
-            std::cout << ss.str() << std::endl;
+            std::cout << "hstat:" << ss.str() << std::endl;
         }
     }
 }

@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -38,11 +38,11 @@ class HumanPlayer : public Player {
 public:
     HumanPlayer();
 
-    std::string getCommand(const Position& pos, bool drawOffer, const std::vector<Position>& history);
-    bool isHumanPlayer();
-    void useBook(bool bookOn);
-    void timeLimit(int minTimeLimit, int maxTimeLimit);
-    void clearTT();
+    std::string getCommand(const Position& pos, bool drawOffer, const std::vector<Position>& history) override;
+    bool isHumanPlayer() override;
+    void useBook(bool bookOn) override;
+    void timeLimit(int minTimeLimit, int maxTimeLimit) override;
+    void clearTT() override;
 
 private:
     std::string lastCmd;

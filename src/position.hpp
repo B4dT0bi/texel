@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -64,9 +64,15 @@ public:
     U64 pawnZobristHash() const;
     U64 kingZobristHash() const;
 
+    /** Zobrist hash including the halfMove clock.
+     *  Only large halfMove clock values affect the hash. */
     U64 historyHash() const;
     /** Hash including halfMoveClock, to avoid opening book cycles. */
     U64 bookHash() const;
+
+    /** Compute zobrist hash for position after "move" has been made.
+     * May be incorrect in some cases, intended for prefetch. */
+    U64 hashAfterMove(const Move& move) const;
 
     /** Return the material identifier. */
     int materialId() const;
@@ -77,7 +83,7 @@ public:
      */
     bool drawRuleEquals(Position other) const;
 
-    int getWhiteMove() const;
+    bool isWhiteMove() const;
 
     void setWhiteMove(bool whiteMove);
 
@@ -139,6 +145,7 @@ public:
     int getHalfMoveClock() const;
     void setHalfMoveClock(int hm);
 
+    /** Return incrementally updated piece square table score for middle game and endgame. */
     int psScore1(int piece) const;
     int psScore2(int piece) const;
 
@@ -154,14 +161,16 @@ public:
     /** BitBoard for all squares occupied by white or black pieces. */
     U64 colorBB(int wtm) const;
 
-    /** BitBoard for all squares occupied by what and black pieces. */
+    /** BitBoard for all squares occupied by white and black pieces. */
     U64 occupiedBB() const;
 
     int wKingSq() const;
     int bKingSq() const;
 
+    /** Total white/black material value. */
     int wMtrl() const;
     int bMtrl() const;
+    /** White/black material value for all pawns. */
     int wMtrlPawns() const;
     int bMtrlPawns() const;
 
@@ -175,12 +184,16 @@ public:
     /** Return y position (rank) corresponding to a square. */
     static int getY(int square);
 
+    /** Return getSquare(getX(square),7-getY(square)). */
+    static int mirrorY(int square);
+
     /** Return true if (x,y) is a dark square. */
     static bool darkSquare(int x, int y);
 
     /** Compute the Zobrist hash value non-incrementally. Only useful for testing. */
     U64 computeZobristHash();
 
+    /** Initialize static data. */
     static void staticInitialize();
 
     /** Get hash key for a piece at a square. */
@@ -319,7 +332,8 @@ Position::drawRuleEquals(Position other) const {
     return true;
 }
 
-inline int Position::getWhiteMove() const {
+inline bool
+Position::isWhiteMove() const {
     return whiteMove;
 }
 
@@ -589,6 +603,11 @@ Position::getX(int square) {
 inline int
 Position::getY(int square) {
     return square >> 3;
+}
+
+inline int
+Position::mirrorY(int square) {
+    return square ^ 56;
 }
 
 /** Return true if (x,y) is a dark square. */

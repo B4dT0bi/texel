@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -46,20 +46,22 @@ public:
     bool verbose;
 
     ComputerPlayer();
+    ComputerPlayer(const ComputerPlayer& other) = delete;
+    ComputerPlayer& operator=(const ComputerPlayer& other) = delete;
 
     void setTTLogSize(int logSize);
 
     void setListener(const std::shared_ptr<Search::Listener>& listener);
 
-    std::string getCommand(const Position& posIn, bool drawOffer, const std::vector<Position>& history);
+    std::string getCommand(const Position& posIn, bool drawOffer, const std::vector<Position>& history) override;
 
-    bool isHumanPlayer();
+    bool isHumanPlayer() override;
 
-    void useBook(bool bookOn);
+    void useBook(bool bookOn) override;
 
-    void timeLimit(int minTimeLimit, int maxTimeLimit);
+    void timeLimit(int minTimeLimit, int maxTimeLimit) override;
 
-    void clearTT();
+    void clearTT() override;
 
     /** Search a position and return the best move and score. Used for test suite processing. */
     std::pair<Move, std::string> searchPosition(Position& pos, int maxTimeMillis);
@@ -67,10 +69,10 @@ public:
     /** Initialize static data. */
     static void staticInitialize();
 
-private:
-    ComputerPlayer(const ComputerPlayer& other) = delete;
-    ComputerPlayer& operator=(const ComputerPlayer& other) = delete;
+    /** Performs initialization that must happen after static initialization. */
+    static void initEngine();
 
+private:
     /** Check if a draw claim is allowed, possibly after playing "move".
      * @param move The move that may have to be made before claiming draw.
      * @return The draw string that claims the draw, or empty string if draw claim not valid.

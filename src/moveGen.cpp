@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@
 #include "moveGen.hpp"
 
 void
-MoveGen::MoveList::filter(const std::vector<Move>& searchMoves)
+MoveList::filter(const std::vector<Move>& searchMoves)
 {
     int used = 0;
     for (int i = 0;i < size; i++)
@@ -41,34 +41,31 @@ template void MoveGen::pseudoLegalMoves<false>(const Position& pos, MoveList& mo
 template <bool wtm>
 void
 MoveGen::pseudoLegalMoves(const Position& pos, MoveList& moveList) {
-    typedef ColorTraits<wtm> MyColor;
+    using MyColor = ColorTraits<wtm>;
     const U64 occupied = pos.occupiedBB();
 
     // Queen moves
     U64 squares = pos.pieceTypeBB(MyColor::QUEEN);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = (BitBoard::rookAttacks(sq, occupied) | BitBoard::bishopAttacks(sq, occupied)) & ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // Rook moves
     squares = pos.pieceTypeBB(MyColor::ROOK);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = BitBoard::rookAttacks(sq, occupied) & ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // Bishop moves
     squares = pos.pieceTypeBB(MyColor::BISHOP);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = BitBoard::bishopAttacks(sq, occupied) & ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // King moves
@@ -76,10 +73,10 @@ MoveGen::pseudoLegalMoves(const Position& pos, MoveList& moveList) {
         int sq = pos.getKingSq(wtm);
         U64 m = BitBoard::kingAttacks[sq] & ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
-        const int k0 = wtm ? 4 : 60;
+        const int k0 = wtm ? E1 : E8;
         if (sq == k0) {
-            const U64 OO_SQ = wtm ? 0x60ULL : 0x6000000000000000ULL;
-            const U64 OOO_SQ = wtm ? 0xEULL : 0xE00000000000000ULL;
+            const U64 OO_SQ = wtm ? BitBoard::sqMask(F1,G1) : BitBoard::sqMask(F8,G8);
+            const U64 OOO_SQ = wtm ? BitBoard::sqMask(B1,C1,D1) : BitBoard::sqMask(B8,C8,D8);
             const int hCastle = wtm ? Position::H1_CASTLE : Position::H8_CASTLE;
             const int aCastle = wtm ? Position::A1_CASTLE : Position::A8_CASTLE;
             if (((pos.getCastleMask() & (1 << hCastle)) != 0) &&
@@ -102,10 +99,9 @@ MoveGen::pseudoLegalMoves(const Position& pos, MoveList& moveList) {
     // Knight moves
     U64 knights = pos.pieceTypeBB(MyColor::KNIGHT);
     while (knights != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(knights);
+        int sq = BitBoard::extractSquare(knights);
         U64 m = BitBoard::knightAttacks[sq] & ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
-        knights &= knights-1;
     }
 
     // Pawn moves
@@ -143,8 +139,8 @@ template void MoveGen::checkEvasions<false>(const Position& pos, MoveList& moveL
 template <bool wtm>
 void
 MoveGen::checkEvasions(const Position& pos, MoveList& moveList) {
-    typedef ColorTraits<wtm> MyColor;
-    typedef ColorTraits<!wtm> OtherColor;
+    using MyColor = ColorTraits<wtm>;
+    using OtherColor = ColorTraits<!wtm>;
     const U64 occupied = pos.occupiedBB();
 
     const int kingSq = pos.getKingSq(wtm);
@@ -166,29 +162,26 @@ MoveGen::checkEvasions(const Position& pos, MoveList& moveList) {
     // Queen moves
     U64 squares = pos.pieceTypeBB(MyColor::QUEEN);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = (BitBoard::rookAttacks(sq, occupied) | BitBoard::bishopAttacks(sq, occupied)) &
                     ~pos.colorBB(wtm) & validTargets;
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // Rook moves
     squares = pos.pieceTypeBB(MyColor::ROOK);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = BitBoard::rookAttacks(sq, occupied) & ~pos.colorBB(wtm) & validTargets;
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // Bishop moves
     squares = pos.pieceTypeBB(MyColor::BISHOP);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = BitBoard::bishopAttacks(sq, occupied) & ~pos.colorBB(wtm) & validTargets;
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // King moves
@@ -201,10 +194,9 @@ MoveGen::checkEvasions(const Position& pos, MoveList& moveList) {
     // Knight moves
     U64 knights = pos.pieceTypeBB(MyColor::KNIGHT);
     while (knights != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(knights);
+        int sq = BitBoard::extractSquare(knights);
         U64 m = BitBoard::knightAttacks[sq] & ~pos.colorBB(wtm) & validTargets;
         addMovesByMask(moveList, sq, m);
-        knights &= knights-1;
     }
 
     // Pawn moves
@@ -257,8 +249,7 @@ template void MoveGen::pseudoLegalCapturesAndChecks<false>(const Position& pos, 
 template <bool wtm>
 void
 MoveGen::pseudoLegalCapturesAndChecks(const Position& pos, MoveList& moveList) {
-    typedef ColorTraits<wtm> MyColor;
-    typedef ColorTraits<!wtm> OtherColor;
+    using MyColor = ColorTraits<wtm>;
     const U64 occupied = pos.occupiedBB();
 
     const int oKingSq = pos.getKingSq(!wtm);
@@ -275,34 +266,31 @@ MoveGen::pseudoLegalCapturesAndChecks(const Position& pos, MoveList& moveList) {
     // Queen moves
     U64 squares = pos.pieceTypeBB(MyColor::QUEEN);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = (BitBoard::rookAttacks(sq, occupied) | BitBoard::bishopAttacks(sq, occupied));
         if ((discovered & (1ULL<<sq)) == 0) m &= (pos.colorBB(!wtm) | kRookAtk | kBishAtk);
         m &= ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // Rook moves
     squares = pos.pieceTypeBB(MyColor::ROOK);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = BitBoard::rookAttacks(sq, occupied);
         if ((discovered & (1ULL<<sq)) == 0) m &= (pos.colorBB(!wtm) | kRookAtk);
         m &= ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // Bishop moves
     squares = pos.pieceTypeBB(MyColor::BISHOP);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = BitBoard::bishopAttacks(sq, occupied);
         if ((discovered & (1ULL<<sq)) == 0) m &= (pos.colorBB(!wtm) | kBishAtk);
         m &= ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // King moves
@@ -311,10 +299,10 @@ MoveGen::pseudoLegalCapturesAndChecks(const Position& pos, MoveList& moveList) {
         U64 m = BitBoard::kingAttacks[sq];
         m &= ((discovered & (1ULL<<sq)) == 0) ? pos.colorBB(!wtm) : ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
-        const int k0 = wtm ? 4 : 60;
+        const int k0 = wtm ? E1 : E8;
         if (sq == k0) {
-            const U64 OO_SQ = wtm ? 0x60ULL : 0x6000000000000000ULL;
-            const U64 OOO_SQ = wtm ? 0xEULL : 0xE00000000000000ULL;
+            const U64 OO_SQ = wtm ? BitBoard::sqMask(F1,G1) : BitBoard::sqMask(F8,G8);
+            const U64 OOO_SQ = wtm ? BitBoard::sqMask(B1,C1,D1) : BitBoard::sqMask(B8,C8,D8);
             const int hCastle = wtm ? Position::H1_CASTLE : Position::H8_CASTLE;
             const int aCastle = wtm ? Position::A1_CASTLE : Position::A8_CASTLE;
             if (((pos.getCastleMask() & (1 << hCastle)) != 0) &&
@@ -338,11 +326,10 @@ MoveGen::pseudoLegalCapturesAndChecks(const Position& pos, MoveList& moveList) {
     U64 knights = pos.pieceTypeBB(MyColor::KNIGHT);
     U64 kKnightAtk = BitBoard::knightAttacks[oKingSq];
     while (knights != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(knights);
+        int sq = BitBoard::extractSquare(knights);
         U64 m = BitBoard::knightAttacks[sq] & ~pos.colorBB(wtm);
         if ((discovered & (1ULL<<sq)) == 0) m &= (pos.colorBB(!wtm) | kKnightAtk);
         addMovesByMask(moveList, sq, m);
-        knights &= knights-1;
     }
 
     // Pawn moves
@@ -396,44 +383,39 @@ template void MoveGen::pseudoLegalCaptures<false>(const Position& pos, MoveList&
 template <bool wtm>
 void
 MoveGen::pseudoLegalCaptures(const Position& pos, MoveList& moveList) {
-    typedef ColorTraits<wtm> MyColor;
-    typedef ColorTraits<!wtm> OtherColor;
+    using MyColor = ColorTraits<wtm>;
     const U64 occupied = pos.occupiedBB();
 
     // Queen moves
     U64 squares = pos.pieceTypeBB(MyColor::QUEEN);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = (BitBoard::rookAttacks(sq, occupied) | BitBoard::bishopAttacks(sq, occupied)) & pos.colorBB(!wtm);
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // Rook moves
     squares = pos.pieceTypeBB(MyColor::ROOK);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = BitBoard::rookAttacks(sq, occupied) & pos.colorBB(!wtm);
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // Bishop moves
     squares = pos.pieceTypeBB(MyColor::BISHOP);
     while (squares != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(squares);
+        int sq = BitBoard::extractSquare(squares);
         U64 m = BitBoard::bishopAttacks(sq, occupied) & pos.colorBB(!wtm);
         addMovesByMask(moveList, sq, m);
-        squares &= squares-1;
     }
 
     // Knight moves
     U64 knights = pos.pieceTypeBB(MyColor::KNIGHT);
     while (knights != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(knights);
+        int sq = BitBoard::extractSquare(knights);
         U64 m = BitBoard::knightAttacks[sq] & pos.colorBB(!wtm);
         addMovesByMask(moveList, sq, m);
-        knights &= knights-1;
     }
 
     // King moves
@@ -468,7 +450,7 @@ MoveGen::pseudoLegalCaptures(const Position& pos, MoveList& moveList) {
 
 bool
 MoveGen::givesCheck(const Position& pos, const Move& m) {
-    bool wtm = pos.getWhiteMove();
+    bool wtm = pos.isWhiteMove();
     int oKingSq = pos.getKingSq(!wtm);
     int oKing = wtm ? Piece::BKING : Piece::WKING;
     int p = Piece::makeWhite(m.promoteTo() == Piece::EMPTY ? pos.getPiece(m.from()) : m.promoteTo());
@@ -583,11 +565,11 @@ MoveGen::removeIllegal(Position& pos, MoveList& moveList) {
 
     bool isInCheck = inCheck(pos);
     const U64 occupied = pos.occupiedBB();
-    int kSq = pos.getKingSq(pos.getWhiteMove());
+    int kSq = pos.getKingSq(pos.isWhiteMove());
     U64 kingAtks = BitBoard::rookAttacks(kSq, occupied) | BitBoard::bishopAttacks(kSq, occupied);
     int epSquare = pos.getEpSquare();
     if (isInCheck) {
-        kingAtks |= pos.pieceTypeBB(pos.getWhiteMove() ? Piece::BKNIGHT : Piece::WKNIGHT);
+        kingAtks |= pos.pieceTypeBB(pos.isWhiteMove() ? Piece::BKNIGHT : Piece::WKNIGHT);
         for (int mi = 0; mi < moveList.size; mi++) {
             const Move& m = moveList[mi];
             bool legal;
@@ -595,9 +577,9 @@ MoveGen::removeIllegal(Position& pos, MoveList& moveList) {
                 legal = false;
             } else {
                 pos.makeMove(m, ui);
-                pos.setWhiteMove(!pos.getWhiteMove());
+                pos.setWhiteMove(!pos.isWhiteMove());
                 legal = !inCheck(pos);
-                pos.setWhiteMove(!pos.getWhiteMove());
+                pos.setWhiteMove(!pos.isWhiteMove());
                 pos.unMakeMove(m, ui);
             }
             if (legal)
@@ -611,9 +593,9 @@ MoveGen::removeIllegal(Position& pos, MoveList& moveList) {
                 legal = true;
             } else {
                 pos.makeMove(m, ui);
-                pos.setWhiteMove(!pos.getWhiteMove());
+                pos.setWhiteMove(!pos.isWhiteMove());
                 legal = !inCheck(pos);
-                pos.setWhiteMove(!pos.getWhiteMove());
+                pos.setWhiteMove(!pos.isWhiteMove());
                 pos.unMakeMove(m, ui);
             }
             if (legal)
@@ -626,13 +608,13 @@ MoveGen::removeIllegal(Position& pos, MoveList& moveList) {
 bool
 MoveGen::isLegal(Position& pos, const Move& m, bool isInCheck) {
     UndoInfo ui;
-    int kSq = pos.getKingSq(pos.getWhiteMove());
+    int kSq = pos.getKingSq(pos.isWhiteMove());
     const int epSquare = pos.getEpSquare();
     if (isInCheck) {
         if ((m.from() != kSq) && (m.to() != epSquare)) {
             U64 occupied = pos.occupiedBB();
             U64 toMask = 1ULL << m.to();
-            Piece::Type knight = pos.getWhiteMove() ? Piece::BKNIGHT : Piece::WKNIGHT;
+            Piece::Type knight = pos.isWhiteMove() ? Piece::BKNIGHT : Piece::WKNIGHT;
             if (((BitBoard::rookAttacks(kSq, occupied) & toMask) == 0) &&
                 ((BitBoard::bishopAttacks(kSq, occupied) & toMask) == 0) &&
                 ((BitBoard::knightAttacks[kSq] & pos.pieceTypeBB(knight) & toMask) == 0))

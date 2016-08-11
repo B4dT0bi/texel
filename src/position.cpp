@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -140,6 +140,22 @@ Position::setPiece(int square, int piece) {
     psScore2_[removedPiece] -= Evaluate::psTab2[removedPiece][square];
     psScore1_[piece]        += Evaluate::psTab1[piece][square];
     psScore2_[piece]        += Evaluate::psTab2[piece][square];
+}
+
+U64
+Position::hashAfterMove(const Move& move) const {
+    int from = move.from();
+    int to = move.to();
+    int p = squares[from];
+    int capP = squares[to];
+
+    U64 ret = hashKey ^ whiteHashKey;
+    ret ^= psHashKeys[capP][to];
+    ret ^= psHashKeys[p][to];
+    ret ^= psHashKeys[p][from];
+    ret ^= psHashKeys[Piece::EMPTY][from];
+
+    return ret;
 }
 
 void
@@ -408,7 +424,7 @@ std::ostream&
 operator<<(std::ostream& os, const Position& pos) {
     std::stringstream ss;
     ss << std::hex << pos.zobristHash();
-    os << TextIO::asciiBoard(pos) << (pos.getWhiteMove() ? "white\n" : "black\n") << ss.str();
+    os << TextIO::asciiBoard(pos) << (pos.isWhiteMove() ? "white\n" : "black\n") << ss.str();
     return os;
 }
 

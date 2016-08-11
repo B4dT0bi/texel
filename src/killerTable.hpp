@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -58,7 +58,7 @@ public:
 private:
     /** There is one KTEntry for each ply in the search tree. */
     struct KTEntry {
-        KTEntry() : move0(0), move1(0) { }
+        KTEntry();
         RelaxedShared<int> move0;
         RelaxedShared<int> move1;
     };
@@ -67,6 +67,11 @@ private:
 
 inline
 KillerTable::KillerTable() {
+}
+
+inline
+KillerTable::KTEntry::KTEntry()
+    : move0(0), move1(0) {
 }
 
 inline void

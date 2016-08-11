@@ -45,6 +45,8 @@ public:
     public:
         HeapObject();
         ~HeapObject();
+        HeapObject(const HeapObject&) = delete;
+        HeapObject& operator=(const HeapObject&) = delete;
 
         /** Get priority of element in heap. */
         int getPrio() const;
@@ -53,9 +55,6 @@ public:
         void newPrio(int prio);
     private:
         friend class Heap;
-
-        HeapObject(const HeapObject&) = delete;
-        HeapObject& operator=(const HeapObject&) = delete;
 
         Heap<T>* owner;
         int prio;
@@ -67,6 +66,9 @@ public:
 
     /** Destructor. Removes all elements from heap. */
     ~Heap();
+
+    Heap(const Heap& other) = delete;
+    Heap& operator=(const Heap& other) = delete;
 
     /** Insert an element in the heap. */
     void insert(const std::shared_ptr<T>& e, int prio);
@@ -93,9 +95,6 @@ public:
     void print(std::ostream& os) const;
 
 private:
-    Heap(const Heap& other) = delete;
-    Heap& operator=(const Heap& other) = delete;
-
     /** Swap two elements in the heap vector and update heapIdx. */
     void swapElems(int idx1, int idx2);
 
@@ -117,7 +116,7 @@ template <typename T> inline Heap<T>::Heap() {
 }
 
 template <typename T> inline Heap<T>::~Heap() {
-    for (int i = heap.size() - 1; i >= 0; i--)
+    for (int i = (int)heap.size() - 1; i >= 0; i--)
         remove(heap[i]);
 }
 
@@ -125,7 +124,7 @@ template <typename T> inline void Heap<T>::insert(const std::shared_ptr<T>& e, i
     assert(!e->owner);
     e->owner = this;
     e->prio = prio;
-    int idx = heap.size();
+    int idx = (int)heap.size();
     e->heapIdx = idx;
     heap.push_back(e);
     upHeap(idx);
@@ -139,7 +138,7 @@ template <typename T> inline void Heap<T>::remove(T* e) {
     if (!e->owner)
         return;
     int idx = e->heapIdx;
-    int last = heap.size() - 1;
+    int last = (int)heap.size() - 1;
     if (idx < last)
         swapElems(e->heapIdx, last);
     e->owner = nullptr;
@@ -169,7 +168,7 @@ template <typename T> bool Heap<T>::empty() const {
 }
 
 template <typename T> int Heap<T>::size() const {
-    return heap.size();
+    return (int)heap.size();
 }
 
 template <typename T> inline void Heap<T>::swapElems(int idx1, int idx2) {
@@ -198,7 +197,7 @@ template <typename T> inline void Heap<T>::upHeap(int idx) {
 }
 
 template <typename T> inline void Heap<T>::downHeap(int idx) {
-    int hSize = heap.size();
+    int hSize = (int)heap.size();
     while (true) {
         int child = idx * 2 + 1;
         if (child >= hSize)

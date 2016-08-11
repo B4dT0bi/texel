@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -149,7 +149,7 @@ TextIO::readFEN(const std::string& fen) {
 
     // Make sure king can not be captured
     Position pos2(pos);
-    pos2.setWhiteMove(!pos.getWhiteMove());
+    pos2.setWhiteMove(!pos.isWhiteMove());
     if (MoveGen::inCheck(pos2))
         throw ChessParseError("King capture possible");
 
@@ -162,14 +162,14 @@ void
 TextIO::fixupEPSquare(Position& pos) {
     int epSquare = pos.getEpSquare();
     if (epSquare >= 0) {
-        MoveGen::MoveList moves;
+        MoveList moves;
         MoveGen::pseudoLegalMoves(pos, moves);
         MoveGen::removeIllegal(pos, moves);
         bool epValid = false;
         for (int mi = 0; mi < moves.size; mi++) {
             const Move& m = moves[mi];
             if (m.to() == epSquare) {
-                if (pos.getPiece(m.from()) == (pos.getWhiteMove() ? Piece::WPAWN : Piece::BPAWN)) {
+                if (pos.getPiece(m.from()) == (pos.isWhiteMove() ? Piece::WPAWN : Piece::BPAWN)) {
                     epValid = true;
                     break;
                 }
@@ -218,7 +218,7 @@ TextIO::toFEN(const Position& pos) {
         if (r > 0)
             ret += '/';
     }
-    ret += (pos.getWhiteMove() ? " w " : " b ");
+    ret += (pos.isWhiteMove() ? " w " : " b ");
 
     // Castling rights
     bool anyCastle = false;
@@ -341,7 +341,7 @@ isCapture(const Position& pos, const Move& move) {
     if (pos.getPiece(move.to()) != Piece::EMPTY)
         return true;
     int p = pos.getPiece(move.from());
-    return (p == (pos.getWhiteMove() ? Piece::WPAWN : Piece::BPAWN)) &&
+    return (p == (pos.isWhiteMove() ? Piece::WPAWN : Piece::BPAWN)) &&
            (move.to() == pos.getEpSquare());
 }
 
@@ -358,7 +358,7 @@ pieceToChar(int p) {
 }
 
 static std::string
-moveToString(Position& pos, const Move& move, bool longForm, const MoveGen::MoveList& moves) {
+moveToString(Position& pos, const Move& move, bool longForm, const MoveList& moves) {
     std::string ret;
     int wKingOrigPos = Position::getSquare(4, 0);
     int bKingOrigPos = Position::getSquare(4, 7);
@@ -387,7 +387,7 @@ moveToString(Position& pos, const Move& move, bool longForm, const MoveGen::Move
             ret += (char)(y1 + '1');
             ret += isCapture(pos, move) ? 'x' : '-';
         } else {
-            if (p == (pos.getWhiteMove() ? Piece::WPAWN : Piece::BPAWN)) {
+            if (p == (pos.isWhiteMove() ? Piece::WPAWN : Piece::BPAWN)) {
                 if (isCapture(pos, move))
                     ret += (char)(x1 + 'a');
             } else {
@@ -428,7 +428,7 @@ moveToString(Position& pos, const Move& move, bool longForm, const MoveGen::Move
     UndoInfo ui;
     if (MoveGen::givesCheck(pos, move)) {
         pos.makeMove(move, ui);
-        MoveGen::MoveList nextMoves;
+        MoveList nextMoves;
         MoveGen::pseudoLegalMoves(pos, nextMoves);
         MoveGen::removeIllegal(pos, nextMoves);
         if (nextMoves.size == 0)
@@ -443,7 +443,7 @@ moveToString(Position& pos, const Move& move, bool longForm, const MoveGen::Move
 
 std::string
 TextIO::moveToString(const Position& pos, const Move& move, bool longForm) {
-    MoveGen::MoveList moves;
+    MoveList moves;
     MoveGen::pseudoLegalMoves(pos, moves);
     Position tmpPos(pos);
     MoveGen::removeIllegal(tmpPos, moves);
@@ -478,7 +478,7 @@ TextIO::stringToMove(Position& pos, const std::string& strMoveIn) {
     if (strMove == "--")
         return move;
 
-    const bool wtm = pos.getWhiteMove();
+    const bool wtm = pos.isWhiteMove();
 
     MoveInfo info;
     bool capture = false;
@@ -549,7 +549,7 @@ TextIO::stringToMove(Position& pos, const std::string& strMoveIn) {
             info.promPiece = Piece::EMPTY;
     }
 
-    MoveGen::MoveList moves;
+    MoveList moves;
     MoveGen::pseudoLegalMoves(pos, moves);
     MoveGen::removeIllegal(pos, moves);
 
@@ -624,3 +624,15 @@ TextIO::asciiBoard(const Position& pos) {
     return ret;
 }
 
+std::string
+TextIO::asciiBoard(U64 mask) {
+    std::string ret;
+    for (int y = 7; y >= 0; y--) {
+        for (int x = 0; x < 8; x++) {
+            int sq = Position::getSquare(x, y);
+            ret += (mask & (1ULL << sq)) ? '1' : '0';
+        }
+        ret += '\n';
+    }
+    return ret;
+}

@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2013-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -31,6 +31,7 @@
 #include "transpositionTable.hpp"
 #include "evaluate.hpp"
 #include "searchUtil.hpp"
+#include "constants.hpp"
 #include "util/timeUtil.hpp"
 #include "util/heap.hpp"
 
@@ -61,6 +62,9 @@ public:
     /** Destructor. Waits for thread to terminate. */
     ~WorkerThread();
 
+    WorkerThread(const WorkerThread&) = delete;
+    WorkerThread& operator=(const WorkerThread&) = delete;
+
     /** Start thread. */
     void start();
 
@@ -68,20 +72,17 @@ public:
     void join();
 
     /** Return true if thread is running. */
-    bool threadRunning() const { return thread != nullptr; }
+    bool threadRunning() const;
 
     /** Return thread number. The first worker thread is number 1. */
-    int getThreadNo() const { return threadNo; }
+    int getThreadNo() const;
 
     /** For debugging. */
-    double getPUseful() const { return pUseful; }
+    double getPUseful() const;
 
 private:
-    WorkerThread(const WorkerThread&) = delete;
-    WorkerThread& operator=(const WorkerThread&) = delete;
-
     /** Thread main loop. */
-    void mainLoop();
+    void mainLoop(int minProbeDepth);
 
     int threadNo;
     ParallelData& pd;
@@ -120,19 +121,23 @@ public:
 
     /** Get best move for helper thread to work on. */
     std::shared_ptr<SplitPoint> getWork(int& moveNo, ParallelData& pd, int threadNo);
-    std::shared_ptr<SplitPoint> getWork(int& moveNo, ParallelData& pd, int threadNo, int& prio, double& pUseful);
+    std::shared_ptr<SplitPoint> getWork(int& moveNo, ParallelData& pd, int threadNo,
+                                        int& prio, double& pUseful);
 
     /** A helper thread stopped working on a move before it was finished. */
     void returnMove(const std::shared_ptr<SplitPoint>& sp, int moveNo);
 
-    /** Set which move number the SplitPoint owner is currently searching. */
-    void setOwnerCurrMove(const std::shared_ptr<SplitPoint>& sp, int moveNo, int alpha);
+    /** Set which move number the SplitPoint owner is currently searching.
+     * @return Score from helper search thread. UNKNOWN_SCORE if no helper has
+     *         searched the move. */
+    int setOwnerCurrMove(const std::shared_ptr<SplitPoint>& sp, int moveNo, int alpha);
 
     /** Cancel this SplitPoint and all children. */
     void cancel(const std::shared_ptr<SplitPoint>& sp);
 
     /** Set move to canceled after helper thread finished searching it. */
-    void moveFinished(const std::shared_ptr<SplitPoint>& sp, int moveNo, bool cancelRemaining);
+    void moveFinished(const std::shared_ptr<SplitPoint>& sp, int moveNo,
+                      bool cancelRemaining, int score);
 
     /** Return probability that the best unstarted move needs to be searched.
      *  Also return the corresponding SplitPoint. */
@@ -286,7 +291,7 @@ private:
     mutable std::mutex mutex;
 
     struct NpsData {
-        NpsData() : nSearches(0), nodes(0), time(0) {}
+        NpsData();
         U32 nSearches;
         U64 nodes;
         double time;
@@ -319,12 +324,18 @@ public:
     /** Get number of nodes searched by all helper threads. */
     S64 getNumSearchedNodes() const;
 
+    /** Get number of TB hits for all helper threads. */
+    S64 getTbHits() const;
+
     /** Add nNodes to total number of searched nodes. */
     void addSearchedNodes(S64 nNodes);
 
+    /** Add nTbHits to number of TB hits. */
+    void addTbHits(S64 nTbHits);
+
 
     /** For debugging. */
-    const WorkerThread& getHelperThread(int i) const { return *threads[i]; }
+    const WorkerThread& getHelperThread(int i) const;
 
     FailHighInfo fhInfo;
     DepthNpsInfo npsInfo;
@@ -344,6 +355,7 @@ private:
     TranspositionTable& tt;
 
     std::atomic<S64> totalHelperNodes; // Number of nodes searched by all helper threads
+    std::atomic<S64> helperTbHits;     // Number of TB hits for all helper threads
 };
 
 
@@ -358,6 +370,9 @@ public:
                int posHashListSize, const SearchTreeInfo& sti,
                const KillerTable& kt, const History& ht,
                int alpha, int beta, int ply, int depth);
+
+    SplitPoint(const SplitPoint&) = delete;
+    SplitPoint& operator=(const SplitPoint&) = delete;
 
     /** Add a child SplitPoint */
     void addChild(const std::weak_ptr<SplitPoint>& child);
@@ -378,12 +393,12 @@ public:
     const std::vector<std::weak_ptr<SplitPoint>>& getChildren() const;
 
 
-    U64 getSeqNo() const { return seqNo; }
-    double getPSpUseful() const { return pSpUseful; }
-    double getPNextMoveUseful() const { return pNextMoveUseful; }
-    const History& getHistory() const { return ht; }
-    const KillerTable& getKillerTable() const { return kt; }
-    const SplitPointMove& getSpMove(int moveNo) const { return spMoves[moveNo]; }
+    U64 getSeqNo() const;
+    double getPSpUseful() const;
+    double getPNextMoveUseful() const;
+    const History& getHistory() const;
+    const KillerTable& getKillerTable() const;
+    const SplitPointMove& getSpMove(int moveNo) const;
 
     /** Return probability that moveNo needs to be searched. */
     double getPMoveUseful(const FailHighInfo& fhInfo, int moveNo) const;
@@ -391,11 +406,11 @@ public:
     void getPos(Position& pos, const Move& move) const;
     void getPosHashList(const Position& pos, std::vector<U64>& posHashList,
                         int& posHashListSize) const;
-    const SearchTreeInfo& getSearchTreeInfo() const { return searchTreeInfo; }
-    int getAlpha() const { return alpha; }
-    int getBeta() const { return beta; }
-    int getPly() const { return ply; }
-    int getDepth() const { return depth; }
+    const SearchTreeInfo& getSearchTreeInfo() const;
+    int getAlpha() const;
+    int getBeta() const;
+    int getPly() const;
+    int getDepth() const;
 
 
     /** Get index of first unstarted move. Mark move as being searched.
@@ -405,8 +420,10 @@ public:
     /** A helper thread stopped working on a move before it was finished. */
     void returnMove(int moveNo);
 
-    /** Set which move number the SplitPoint owner is currently searching. */
-    void setOwnerCurrMove(int moveNo, int alpha);
+    /** Set which move number the SplitPoint owner is currently searching.
+     * @return Score from helper search thread. UNKNOWN_SCORE if no helper has
+     *         searched the move. */
+    int setOwnerCurrMove(int moveNo, int alpha);
 
     /** Cancel this SplitPoint and all children. */
     void cancel();
@@ -415,7 +432,7 @@ public:
     bool isCanceled() const;
 
     /** Set move to canceled after helper thread finished searching it. */
-    void moveFinished(int moveNo, bool cancelRemaining);
+    void moveFinished(int moveNo, bool cancelRemaining, int score);
 
     /** Return true if there are moves that have not been started to be searched. */
     bool hasUnStartedMove() const;
@@ -440,30 +457,27 @@ public:
     int getSpPrio(const DepthNpsInfo& npsInfo) const;
 
     /** Thread that created this SplitPoint. */
-    int owningThread() const { return threadNo; }
+    int owningThread() const;
 
     /** Return true if object is or has been inserted in WorkQueue. */
-    bool wasInserted() const { return inserted; }
+    bool wasInserted() const;
 
     /** Mark SplitPoint as inserted in WorkQueue. */
-    void setInserted() { inserted = true; }
+    void setInserted();
 
     /** Print object state to "os", for debugging. */
     void print(std::ostream& os, int level, const FailHighInfo& fhInfo) const;
 
     /** For debugging. */
-    int getParentMoveNo() const { return parentMoveNo; }
+    int getParentMoveNo() const;
 
     /** For debugging. */
-    int getCurrMoveNo() const { return currMoveNo; }
+    int getCurrMoveNo() const;
 
     /** Get index of first unstarted move, or -1 if there is no unstarted move. */
     int findNextMove(const FailHighInfo& fhInfo) const;
 
 private:
-    SplitPoint(const SplitPoint&) = delete;
-    SplitPoint& operator=(const SplitPoint&) = delete;
-
     /** Return probability that moveNo needs to be searched, by calling corresponding
      * function in fhInfo. */
     double getMoveNeededProbability(const FailHighInfo& fhInfo, int moveNo) const;
@@ -509,17 +523,20 @@ public:
     SplitPointMove(const Move& move, int lmr, int depth,
                    int captSquare, bool inCheck);
 
-    const Move& getMove() const { return move; }
-    int getLMR() const { return lmr; }
-    int getDepth() const { return depth; }
-    int getRecaptureSquare() const { return captSquare; }
-    bool getInCheck() const { return inCheck; }
+    const Move& getMove() const;
+    int getLMR() const;
+    int getDepth() const;
+    int getRecaptureSquare() const;
+    bool getInCheck() const;
 
-    bool isCanceled() const { return canceled; }
-    void setCanceled(bool value) { canceled = value; }
+    bool isCanceled() const;
+    void setCanceled(bool value);
 
-    bool isSearching() const { return searching; }
-    void setSearching(bool value) { searching = value; }
+    bool isSearching() const;
+    void setSearching(bool value);
+
+    void setScore(int s);
+    int getScore() const;
 
 private:
     Move move;      // Position defined by sp->pos + move
@@ -530,6 +547,7 @@ private:
 
     RelaxedShared<bool> canceled; // Result is no longer needed
     bool searching; // True if currently searched by a helper thread
+    int score;
 };
 
 
@@ -543,6 +561,9 @@ public:
     /** Destructor. Cancel SplitPoint. */
     ~SplitPointHolder();
 
+    SplitPointHolder(const SplitPointHolder&) = delete;
+    SplitPointHolder& operator=(const SplitPointHolder&) = delete;
+
     /** Set the SplitPoint object. */
     void setSp(const std::shared_ptr<SplitPoint>& sp);
 
@@ -554,22 +575,21 @@ public:
      * objects from the pending vector and clear the pending vector. */
     void addToQueue();
 
-    /** Set which move number the SplitPoint owner is currently searching. */
-    void setOwnerCurrMove(int moveNo, int alpha);
+    /** Set which move number the SplitPoint owner is currently searching.
+     * @return Score from helper search thread. UNKNOWN_SCORE if no helper has
+     *         searched the move. */
+    int setOwnerCurrMove(int moveNo, int alpha);
 
     /** For debugging. */
-    int getSeqNo() const { return sp->getSeqNo(); }
+    U64 getSeqNo() const;
 
     /** Return true if the held SplitPoint is an estimated ALL node. */
     bool isAllNode() const;
 
     /** Return true if some other thread is helping the help SplitPoint. */
-    bool hasHelperThread() const { return sp->hasHelperThread(); }
+    bool hasHelperThread() const;
 
 private:
-    SplitPointHolder(const SplitPointHolder&) = delete;
-    SplitPointHolder& operator=(const SplitPointHolder&) = delete;
-
     ParallelData& pd;
     std::vector<std::shared_ptr<SplitPoint>>& spVec;
     std::vector<std::shared_ptr<SplitPoint>>& pending;
@@ -584,23 +604,39 @@ struct DummySplitPointHolder {
     void setSp(const std::shared_ptr<SplitPoint>& sp) {}
     void addMove(int moveNo, const SplitPointMove& spMove) {}
     void addToQueue() {}
-    void setOwnerCurrMove(int moveNo, int alpha) {}
+    int setOwnerCurrMove(int moveNo, int alpha) { return SearchConst::UNKNOWN_SCORE; }
     bool isAllNode() const { return false; }
 };
 
 template <bool smp> struct SplitPointTraits {
 };
 template<> struct SplitPointTraits<true> {
-    typedef SplitPointHolder SpHolder;
+    using SpHolder = SplitPointHolder;
 };
 template<> struct SplitPointTraits<false> {
-    typedef DummySplitPointHolder SpHolder;
+    using SpHolder = DummySplitPointHolder;
 };
 
+
+inline bool
+WorkerThread::threadRunning() const {
+    return thread != nullptr;
+}
+
+inline int
+WorkerThread::getThreadNo() const {
+    return threadNo;
+}
+
+inline double
+WorkerThread::getPUseful() const {
+    return pUseful;
+}
 
 inline
 WorkQueue::WorkQueue(const FailHighInfo& fhInfo0, const DepthNpsInfo& npsInfo0)
     : stopped(false), fhInfo(fhInfo0), npsInfo(npsInfo0) {
+    resetSplitDepth();
 }
 
 inline bool
@@ -674,6 +710,11 @@ DepthNpsInfo::DepthNpsInfo() {
     reset();
 }
 
+inline
+DepthNpsInfo::NpsData::NpsData()
+    : nSearches(0), nodes(0), time(0) {
+}
+
 inline void
 DepthNpsInfo::reset() {
     std::lock_guard<std::mutex> L(mutex);
@@ -737,13 +778,13 @@ WorkQueue::Lock::wait(std::condition_variable& cv) {
 
 
 inline ParallelData::ParallelData(TranspositionTable& tt0)
-    : wq(fhInfo, npsInfo), t0Index(0), tt(tt0) {
-    totalHelperNodes = 0;
+    : wq(fhInfo, npsInfo), t0Index(0), tt(tt0),
+      totalHelperNodes(0), helperTbHits(0) {
 }
 
 inline int
 ParallelData::numHelperThreads() const {
-    return threads.size();
+    return (int)threads.size();
 }
 
 inline S64
@@ -751,10 +792,26 @@ ParallelData::getNumSearchedNodes() const {
     return totalHelperNodes;
 }
 
+inline S64
+ParallelData::getTbHits() const {
+    return helperTbHits;
+}
+
 inline void
 ParallelData::addSearchedNodes(S64 nNodes) {
     totalHelperNodes += nNodes;
 }
+
+inline void
+ParallelData::addTbHits(S64 nTbHits) {
+    helperTbHits += nTbHits;
+}
+
+inline const WorkerThread&
+ParallelData::getHelperThread(int i) const {
+    return *threads[i];
+}
+
 
 inline bool
 SplitPoint::isCanceled() const {
@@ -776,6 +833,61 @@ SplitPoint::getChildren() const {
     return children;
 }
 
+inline U64
+SplitPoint::getSeqNo() const {
+    return seqNo;
+}
+
+inline double
+SplitPoint::getPSpUseful() const {
+    return pSpUseful;
+}
+
+inline double
+SplitPoint::getPNextMoveUseful() const {
+    return pNextMoveUseful;
+}
+
+inline const History&
+SplitPoint::getHistory() const {
+    return ht;
+}
+
+inline const KillerTable&
+SplitPoint::getKillerTable() const {
+    return kt;
+}
+
+inline const SplitPointMove&
+SplitPoint::getSpMove(int moveNo) const {
+    return spMoves[moveNo];
+}
+
+inline const SearchTreeInfo&
+SplitPoint::getSearchTreeInfo() const {
+    return searchTreeInfo;
+}
+
+inline int
+SplitPoint::getAlpha() const {
+    return alpha;
+}
+
+inline int
+SplitPoint::getBeta() const {
+    return beta;
+}
+
+inline int
+SplitPoint::getPly() const {
+    return ply;
+}
+
+inline int
+SplitPoint::getDepth() const {
+    return depth;
+}
+
 inline void
 SplitPoint::returnMove(int moveNo) {
     assert((moveNo >= 0) && (moveNo < (int)spMoves.size()));
@@ -783,13 +895,15 @@ SplitPoint::returnMove(int moveNo) {
     spm.setSearching(false);
 }
 
-inline void
+inline int
 SplitPoint::setOwnerCurrMove(int moveNo, int newAlpha) {
     assert((moveNo >= 0) && (moveNo < (int)spMoves.size()));
+    int score = spMoves[moveNo].getScore();
     spMoves[moveNo].setCanceled(true);
     currMoveNo = moveNo;
     if (newAlpha > alpha)
         alpha = newAlpha;
+    return score;
 }
 
 inline void
@@ -816,11 +930,93 @@ SplitPoint::getSpPrio(const DepthNpsInfo& npsInfo) const {
     return (int)(getPNextMoveUseful() * npsInfo.efficiency(getDepth()) * 1000);
 }
 
+inline int
+SplitPoint::owningThread() const {
+    return threadNo;
+}
+
+inline bool
+SplitPoint::wasInserted() const {
+    return inserted;
+}
+
+inline void
+SplitPoint::setInserted() {
+    inserted = true;
+}
+
+inline int
+SplitPoint::getParentMoveNo() const {
+    return parentMoveNo;
+}
+
+inline int
+SplitPoint::getCurrMoveNo() const {
+    return currMoveNo;
+}
+
+
 inline
 SplitPointMove::SplitPointMove(const Move& move0, int lmr0, int depth0,
                               int captSquare0, bool inCheck0)
     : move(move0), lmr(lmr0), depth(depth0), captSquare(captSquare0),
-      inCheck(inCheck0), canceled(false), searching(false) {
+      inCheck(inCheck0), canceled(false), searching(false),
+      score(SearchConst::UNKNOWN_SCORE) {
+}
+
+inline const Move&
+SplitPointMove::getMove() const {
+    return move;
+}
+
+inline int
+SplitPointMove::getLMR() const {
+    return lmr;
+}
+
+inline int
+SplitPointMove::getDepth() const {
+    return depth;
+}
+
+inline int
+SplitPointMove::getRecaptureSquare() const {
+    return captSquare;
+}
+
+inline bool
+SplitPointMove::getInCheck() const {
+    return inCheck;
+}
+
+inline bool
+SplitPointMove::isCanceled() const {
+    return canceled;
+}
+
+inline void
+SplitPointMove::setCanceled(bool value) {
+    canceled = value;
+}
+
+inline bool
+SplitPointMove::isSearching() const {
+    return searching;
+}
+
+inline void
+SplitPointMove::setSearching(bool value) {
+    searching = value;
+}
+
+inline void
+SplitPointMove::setScore(int s) {
+    score = s;
+}
+
+inline int
+SplitPointMove::getScore() const {
+    return score;
 }
 
 
@@ -855,20 +1051,30 @@ SplitPointHolder::addMove(int moveNo, const SplitPointMove& spMove) {
     sp->addMove(moveNo, spMove);
 }
 
-inline void
+inline int
 SplitPointHolder::setOwnerCurrMove(int moveNo, int alpha) {
 //    if (sp->hasHelperThread())
 //        log([&](std::ostream& os){os << "seqNo:" << sp->getSeqNo() << " currMove:" << moveNo
 //                                     << " a:" << alpha;});
     if (sp->wasInserted())
-        pd.wq.setOwnerCurrMove(sp, moveNo, alpha);
+        return pd.wq.setOwnerCurrMove(sp, moveNo, alpha);
     else
-        sp->setOwnerCurrMove(moveNo, alpha);
+        return sp->setOwnerCurrMove(moveNo, alpha);
+}
+
+inline U64
+SplitPointHolder::getSeqNo() const {
+    return sp->getSeqNo();
 }
 
 inline bool
 SplitPointHolder::isAllNode() const {
     return sp->isAllNode();
+}
+
+inline bool
+SplitPointHolder::hasHelperThread() const {
+    return sp->hasHelperThread();
 }
 
 #endif /* PARALLEL_HPP_ */

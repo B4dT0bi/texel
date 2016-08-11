@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -32,21 +32,20 @@
 #include <cstdlib>
 #include <sstream>
 #include <vector>
+#include <array>
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <iomanip>
 
-typedef uint64_t U64;
-typedef int64_t  S64;
-typedef uint32_t U32;
-typedef int32_t  S32;
-typedef uint16_t U16;
-typedef int16_t  S16;
-typedef int8_t   S8;
-typedef uint8_t  U8;
-typedef signed char byte;
-typedef unsigned char ubyte;
+using U64 = uint64_t;
+using S64 = int64_t;
+using U32 = uint32_t;
+using S32 = int32_t;
+using U16 = uint16_t;
+using S16 = int16_t;
+using S8  = int8_t;
+using U8  = uint8_t;
 
 template <typename T, size_t N> char (&ArraySizeHelper(T(&array)[N]))[N];
 #define COUNT_OF(array) (sizeof(ArraySizeHelper(array)))
@@ -54,7 +53,7 @@ template <typename T, size_t N> char (&ArraySizeHelper(T(&array)[N]))[N];
 template <typename T> class AlignedAllocator;
 /** std::vector with cache line aware allocator. */
 template <typename T>
-class vector_aligned : public std::vector<T, AlignedAllocator<T> > { };
+class vector_aligned : public std::vector<T, AlignedAllocator<T>> { };
 
 
 /** Helper class to perform static initialization of a class T. */
@@ -76,6 +75,9 @@ T clamp(T val, T min, T max) {
         return val;
 }
 
+/** Return integer 2-logarithm of a positive number. */
+int floorLog2(U32 x);
+
 // ----------------------------------------------------------------------------
 
 /** Split a string using " " as delimiter. Append words to out. */
@@ -96,7 +98,7 @@ str2Num(const std::string& str, T& result) {
     ss >> result;
     return !!ss;
 }
-#if defined(__linux__) && !defined(__arm__)
+#if defined(__linux__) && !defined(__arm__) && !defined(__ANDROID__)
 inline bool
 str2Num(const std::string& str, int& result) {
     try {
@@ -158,6 +160,18 @@ startsWith(const std::string& str, const std::string& startsWith) {
         return false;
     for (size_t i = 0; i < N; i++)
         if (str[i] != startsWith[i])
+            return false;
+    return true;
+}
+
+inline bool
+endsWith(const std::string& str, const std::string& endsWith) {
+    size_t N = endsWith.length();
+    size_t sN = str.length();
+    if (sN < N)
+        return false;
+    for (size_t i = 0; i < N; i++)
+        if (str[sN - N + i] != endsWith[i])
             return false;
     return true;
 }

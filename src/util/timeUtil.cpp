@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2013-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -28,23 +28,30 @@
 #include <chrono>
 #include <iostream>
 
-#if defined(__GNUC__) || defined(__LINUX__)
+#ifdef HAS_RT
 #include <time.h>
 #include <sys/time.h>
 #endif
 
 S64 currentTimeMillis() {
+#ifdef HAS_RT
+    clockid_t c = CLOCK_MONOTONIC;
+    timespec sp;
+    clock_gettime(c, &sp);
+    return (S64)(sp.tv_sec * 1e3 + sp.tv_nsec * 1e-6);
+#else
     auto t = std::chrono::high_resolution_clock::now();
     auto t0 = t.time_since_epoch();
     auto x = t0.count();
-    typedef decltype(t0) T0Type;
+    using T0Type = decltype(t0);
     auto n = T0Type::period::num;
     auto d = T0Type::period::den;
     return (S64)(x * (1000.0 * n / d));
+#endif
 }
 
 double currentTime() {
-#if defined(__GNUC__) || defined(__linux__)
+#ifdef HAS_RT
     clockid_t c = CLOCK_MONOTONIC;
     timespec sp;
     clock_gettime(c, &sp);
@@ -53,7 +60,7 @@ double currentTime() {
     auto t = std::chrono::high_resolution_clock::now();
     auto t0 = t.time_since_epoch();
     double x = t0.count();
-    typedef decltype(t0) T0Type;
+    using T0Type = decltype(t0);
     double n = T0Type::period::num;
     double d = T0Type::period::den;
     return x * n / d;

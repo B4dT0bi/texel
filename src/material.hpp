@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2013-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -46,7 +46,7 @@ public:
     static const int BB = 767 << 16;
     static const int BQ = 5903 << 16;
 
-    MatId() : hash(0) {}
+    MatId();
 
     /** Add a piece to the material configuration. */
     void addPiece(int pType);
@@ -54,13 +54,24 @@ public:
     /** Remove a piece from the material configuration. */
     void removePiece(int pType);
 
+    /** Add cnt pieces of tyep ptype to the material configuration. */
+    void addPieceCnt(int pType, int cnt);
+
     /** Get the material configuration identifier. */
     int operator()() const;
+
+    /** Get ID for black/white mirror position. */
+    static int mirror(int id);
 
 private:
     int hash;
     static const int materialId[Piece::nPieceTypes];
 };
+
+inline
+MatId::MatId()
+    : hash(0) {
+}
 
 inline void
 MatId::addPiece(int pType) {
@@ -72,9 +83,20 @@ MatId::removePiece(int pType) {
     hash -= materialId[pType];
 }
 
+inline void
+MatId::addPieceCnt(int pType, int cnt) {
+    hash += materialId[pType] * cnt;
+}
+
 inline int
 MatId::operator()() const {
     return hash;
+}
+
+inline int
+MatId::mirror(int h) {
+    unsigned int ret = h;
+    return (ret >> 16) | ((ret & 0xffff) << 16);
 }
 
 #endif /* MATERIAL_HPP_ */

@@ -50,7 +50,7 @@ UCIProtocol::mainLoop(std::istream& is, std::ostream& os, bool autoStart) {
     std::string line;
     while (true) {
         getline(is, line);
-        if (!is || is.eof()) {
+        if (!is.good()) {
             if (engine)
                 engine->stopSearch();
             break;
@@ -86,7 +86,7 @@ UCIProtocol::handleCommand(const std::string& cmdLine, std::ostream& os) {
                 return;
             if (tokens[1] == "name") {
                 int idx = 2;
-                while ((idx+1 < nTok) && (tokens[idx] != "value")) {
+                while ((idx < nTok) && (tokens[idx] != "value")) {
                     optionName += toLowerCase(tokens[idx++]);
                     optionName += ' ';
                 }
@@ -96,7 +96,7 @@ UCIProtocol::handleCommand(const std::string& cmdLine, std::ostream& os) {
                         optionValue += ' ';
                     }
                 }
-                engine->setOption(trim(optionName), trim(optionValue));
+                engine->setOption(trim(optionName), trim(optionValue), true);
             }
         } else if (cmd == "ucinewgame") {
             if (engine)

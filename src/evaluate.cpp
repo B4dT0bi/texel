@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -24,6 +24,7 @@
  */
 
 #include "evaluate.hpp"
+#include "endGameEval.hpp"
 #include <vector>
 
 int Evaluate::pieceValueOrder[Piece::nPieceTypes] = {
@@ -96,12 +97,6 @@ Evaluate::staticInitialize() {
     }
 }
 
-namespace EvaluateNS {
-    void updateEvalParams() {
-        Evaluate::updateEvalParams();
-    }
-}
-
 void
 Evaluate::updateEvalParams() {
     // Castle bonus
@@ -156,26 +151,6 @@ Evaluate::updateEvalParams() {
 
 const int* Evaluate::psTab1[Piece::nPieceTypes];
 const int* Evaluate::psTab2[Piece::nPieceTypes];
-
-const int Evaluate::distToH1A8[8][8] = { { 0, 1, 2, 3, 4, 5, 6, 7 },
-                                         { 1, 2, 3, 4, 5, 6, 7, 6 },
-                                         { 2, 3, 4, 5, 6, 7, 6, 5 },
-                                         { 3, 4, 5, 6, 7, 6, 5, 4 },
-                                         { 4, 5, 6, 7, 6, 5, 4, 3 },
-                                         { 5, 6, 7, 6, 5, 4, 3, 2 },
-                                         { 6, 7, 6, 5, 4, 3, 2, 1 },
-                                         { 7, 6, 5, 4, 3, 2, 1, 0 } };
-
-static const int winKingTable[64] = {
-    0,   4,  10,  10,  10,  10,   4,   0,
-    4,  15,  19,  20,  20,  19,  15,   4,
-   10,  19,  25,  25,  25,  25,  19,  10,
-   10,  20,  25,  25,  25,  25,  20,  10,
-   10,  20,  25,  25,  25,  25,  20,  10,
-   10,  19,  25,  25,  25,  25,  19,  10,
-    4,  15,  19,  20,  20,  19,  15,   4,
-    0,   4,  10,  10,  10,  10,   4,   0
-};
 
 int Evaluate::knightMobScoreA[64][9];
 U64 Evaluate::knightKingProtectPattern[64];
@@ -233,18 +208,28 @@ Evaluate::evalPos(const Position& pos) {
     if (print) std::cout << "eval knight :" << score << std::endl;
     score += threatBonus(pos);
     if (print) std::cout << "eval threat :" << score << std::endl;
+    score += protectBonus(pos);
+    if (print) std::cout << "eval protect:" << score << std::endl;
     score += kingSafety(pos);
     if (print) std::cout << "eval king   :" << score << std::endl;
     if (mhd->endGame)
-        score = endGameEval<true>(pos, score);
+        score = EndGameEval::endGameEval<true>(pos, phd->passedPawns, score);
     if (print) std::cout << "eval endgame:" << score << std::endl;
     if (pos.pieceTypeBB(Piece::WPAWN, Piece::BPAWN)) {
         int hmc = clamp(pos.getHalfMoveClock() / 10, 0, 9);
         score = score * halfMoveFactor[hmc] / 128;
     }
     if (print) std::cout << "eval halfmove:" << score << std::endl;
+    if (score > 0) {
+        int nStale = BitBoard::bitCount(BitBoard::southFill(phd->stalePawns & pos.pieceTypeBB(Piece::WPAWN)) & 0xff);
+        score = score * stalePawnFactor[nStale] / 128;
+    } else if (score < 0) {
+        int nStale = BitBoard::bitCount(BitBoard::southFill(phd->stalePawns & pos.pieceTypeBB(Piece::BPAWN)) & 0xff);
+        score = score * stalePawnFactor[nStale] / 128;
+    }
+    if (print) std::cout << "eval staleP :" << score << std::endl;
 
-    if (!pos.getWhiteMove())
+    if (!pos.isWhiteMove())
         score = -score;
     return score;
 }
@@ -342,7 +327,7 @@ Evaluate::computeMaterialScore(const Position& pos, MaterialHashData& mhd, bool 
     if (print) std::cout << "eval imbala :" << score << std::endl;
     mhd.id = pos.materialId();
     mhd.score = score;
-    mhd.endGame = endGameEval<false>(pos, 0);
+    mhd.endGame = EndGameEval::endGameEval<false>(pos, 0, 0);
 
     // Compute interpolation factors
     { // Pawn
@@ -416,26 +401,9 @@ Evaluate::tradeBonus(const Position& pos, int wCorr, int bCorr) const {
     return pBonus;
 }
 
-static int
-mateEval(int k1, int k2) {
-    static const int loseKingTable[64] = {
-        0,   4,   8,  12,  12,   8,   4,   0,
-        4,   8,  12,  16,  16,  12,   8,   4,
-        8,  12,  16,  20,  20,  16,  12,   8,
-       12,  16,  20,  24,  24,  20,  16,  12,
-       12,  16,  20,  24,  24,  20,  16,  12,
-        8,  12,  16,  20,  20,  16,  12,   8,
-        4,   8,  12,  16,  16,  12,   8,   4,
-        0,   4,   8,  12,  12,   8,   4,   0
-    };
-    return winKingTable[k1] - loseKingTable[k2];
-}
-
 int
 Evaluate::pieceSquareEval(const Position& pos) {
     int score = 0;
-    const int wMtrlPawns = pos.wMtrlPawns();
-    const int bMtrlPawns = pos.bMtrlPawns();
 
     // Kings/pawns
     if (pos.wMtrlPawns() + pos.bMtrlPawns() > 0) {
@@ -451,11 +419,12 @@ Evaluate::pieceSquareEval(const Position& pos) {
         }
     } else { // Use symmetric tables if no pawns left
         if (pos.wMtrl() > pos.bMtrl())
-            score += mateEval(pos.getKingSq(true), pos.getKingSq(false));
+            score += EndGameEval::mateEval(pos.getKingSq(true), pos.getKingSq(false));
         else if (pos.wMtrl() < pos.bMtrl())
-            score -= mateEval(pos.getKingSq(false), pos.getKingSq(true));
+            score -= EndGameEval::mateEval(pos.getKingSq(false), pos.getKingSq(true));
         else
-            score += winKingTable[pos.getKingSq(true)] - winKingTable[pos.getKingSq(false)];
+            score += EndGameEval::winKingTable[pos.getKingSq(true)] -
+                     EndGameEval::winKingTable[pos.getKingSq(false)];
     }
 
     // Knights/bishops
@@ -476,24 +445,22 @@ Evaluate::pieceSquareEval(const Position& pos) {
         score += interpolate(q2, q1, mhd->queenIPF);
         U64 m = pos.pieceTypeBB(Piece::WQUEEN);
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             U64 atk = BitBoard::rookAttacks(sq, occupied) | BitBoard::bishopAttacks(sq, occupied);
             wAttacksBB |= atk;
             score += queenMobScore[BitBoard::bitCount(atk & ~(pos.whiteBB() | bPawnAttacks))];
             bKingAttacks += BitBoard::bitCount(atk & bKingZone) * 2;
-            m &= m-1;
         }
         q1 = pos.psScore1(Piece::BQUEEN);
         q2 = pos.psScore2(Piece::BQUEEN);
         score -= interpolate(q2, q1, mhd->queenIPF);
         m = pos.pieceTypeBB(Piece::BQUEEN);
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             U64 atk = BitBoard::rookAttacks(sq, occupied) | BitBoard::bishopAttacks(sq, occupied);
             bAttacksBB |= atk;
             score -= queenMobScore[BitBoard::bitCount(atk & ~(pos.blackBB() | wPawnAttacks))];
             wKingAttacks += BitBoard::bitCount(atk & wKingZone) * 2;
-            m &= m-1;
         }
     }
 
@@ -501,13 +468,13 @@ Evaluate::pieceSquareEval(const Position& pos) {
     {
         int r1 = pos.psScore1(Piece::WROOK);
         if (r1 != 0) {
-            const int nP = bMtrlPawns / pV;
+            const int nP = BitBoard::bitCount(pos.pieceTypeBB(Piece::BPAWN));
             const int s = r1 * std::min(nP, 6) / 6;
             score += s;
         }
         r1 = pos.psScore1(Piece::BROOK);
         if (r1 != 0) {
-            const int nP = wMtrlPawns / pV;
+            const int nP = BitBoard::bitCount(pos.pieceTypeBB(Piece::WPAWN));
             const int s = r1 * std::min(nP, 6) / 6;
             score -= s;
         }
@@ -545,7 +512,7 @@ Evaluate::castleBonus(const Position& pos) {
 int
 Evaluate::pawnBonus(const Position& pos) {
     U64 key = pos.pawnZobristHash();
-    PawnHashData& phd = pawnHash[(int)key & (pawnHash.size() - 1)];
+    PawnHashData& phd = getPawnHashEntry(pawnHash, key);
     if (phd.key != key)
         computePawnHashData(pos, phd);
     this->phd = &phd;
@@ -553,7 +520,8 @@ Evaluate::pawnBonus(const Position& pos) {
 
     // Bonus for own king supporting passed pawns
     int passedScore = phd.passedBonusW;
-    U64 m = phd.passedPawnsW;
+    const U64 passedPawnsW = phd.passedPawns & pos.pieceTypeBB(Piece::WPAWN);
+    U64 m = passedPawnsW;
     if (m != 0) {
         U64 kMask = pos.pieceTypeBB(Piece::WKING);
         int ky = Position::getY(pos.getKingSq(true));
@@ -570,7 +538,7 @@ Evaluate::pawnBonus(const Position& pos) {
             passedScore += kingPPSupportK[4] * kingPPSupportP[ky-2] / 32;
 
         // Penalty for opponent pieces blocking passed pawns
-        U64 ppBlockSquares = phd.passedPawnsW << 8;
+        U64 ppBlockSquares = passedPawnsW << 8;
         if (ppBlockSquares & pos.blackBB()) {
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::BKNIGHT)) * ppBlockerBonus[0];
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::BBISHOP)) * ppBlockerBonus[1];
@@ -578,7 +546,7 @@ Evaluate::pawnBonus(const Position& pos) {
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::BQUEEN))  * ppBlockerBonus[3];
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::BKING))   * ppBlockerBonus[4];
         }
-        ppBlockSquares = BitBoard::northFill(phd.passedPawnsW << 16);
+        ppBlockSquares = BitBoard::northFill(passedPawnsW << 16);
         if (ppBlockSquares & pos.blackBB()) {
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::BKNIGHT)) * ppBlockerBonus[5];
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::BBISHOP)) * ppBlockerBonus[6];
@@ -588,14 +556,15 @@ Evaluate::pawnBonus(const Position& pos) {
         }
 
         // Bonus for rook behind passed pawn
-        m = BitBoard::southFill(phd.passedPawnsW);
+        m = BitBoard::southFill(passedPawnsW);
         passedScore += RBehindPP1 * BitBoard::bitCount(m & pos.pieceTypeBB(Piece::WROOK));
         passedScore -= RBehindPP2 * BitBoard::bitCount(m & pos.pieceTypeBB(Piece::BROOK));
     }
     score += interpolate(passedScore * passedPawnEGFactor / 32, passedScore, mhd->wPassedPawnIPF);
 
     passedScore = phd.passedBonusB;
-    m = phd.passedPawnsB;
+    const U64 passedPawnsB = phd.passedPawns & pos.pieceTypeBB(Piece::BPAWN);
+    m = passedPawnsB;
     if (m != 0) {
         U64 kMask = pos.pieceTypeBB(Piece::BKING);
         int ky = Position::getY(pos.getKingSq(false));
@@ -612,7 +581,7 @@ Evaluate::pawnBonus(const Position& pos) {
             passedScore += kingPPSupportK[4] * kingPPSupportP[5-ky] / 32;
 
         // Penalty for opponent pieces blocking passed pawns
-        U64 ppBlockSquares = phd.passedPawnsB >> 8;
+        U64 ppBlockSquares = passedPawnsB >> 8;
         if (ppBlockSquares & pos.whiteBB()) {
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::WKNIGHT)) * ppBlockerBonus[0];
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::WBISHOP)) * ppBlockerBonus[1];
@@ -620,7 +589,7 @@ Evaluate::pawnBonus(const Position& pos) {
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::WQUEEN))  * ppBlockerBonus[3];
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::WKING))   * ppBlockerBonus[4];
         }
-        ppBlockSquares = BitBoard::southFill(phd.passedPawnsB >> 16);
+        ppBlockSquares = BitBoard::southFill(passedPawnsB >> 16);
         if (ppBlockSquares && pos.whiteBB()) {
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::WKNIGHT)) * ppBlockerBonus[5];
             passedScore -= BitBoard::bitCount(ppBlockSquares & pos.pieceTypeBB(Piece::WBISHOP)) * ppBlockerBonus[6];
@@ -630,7 +599,7 @@ Evaluate::pawnBonus(const Position& pos) {
         }
 
         // Bonus for rook behind passed pawn
-        m = BitBoard::northFill(phd.passedPawnsB);
+        m = BitBoard::northFill(passedPawnsB);
         passedScore += RBehindPP1 * BitBoard::bitCount(m & pos.pieceTypeBB(Piece::BROOK));
         passedScore -= RBehindPP2 * BitBoard::bitCount(m & pos.pieceTypeBB(Piece::WROOK));
     }
@@ -638,7 +607,7 @@ Evaluate::pawnBonus(const Position& pos) {
 
     // Passed pawns are more dangerous if enemy king is far away
     const int hiMtrl = passedPawnHiMtrl;
-    m = phd.passedPawnsW;
+    m = passedPawnsW;
     int bestWPawnDist = 8;
     int bestWPromSq = -1;
     if (m != 0) {
@@ -646,7 +615,7 @@ Evaluate::pawnBonus(const Position& pos) {
         if (mtrlNoPawns < hiMtrl) {
             int kingPos = pos.getKingSq(false);
             while (m != 0) {
-                int sq = BitBoard::numberOfTrailingZeros(m);
+                int sq = BitBoard::extractSquare(m);
                 int x = Position::getX(sq);
                 int y = Position::getY(sq);
                 int pawnDist = std::min(5, 7 - y);
@@ -654,7 +623,7 @@ Evaluate::pawnBonus(const Position& pos) {
                 int kScore = kingDist * 4;
                 if (kingDist > pawnDist) kScore += (kingDist - pawnDist) * (kingDist - pawnDist);
                 score += interpolate(kScore, 0, mhd->wPassedPawnIPF);
-                if (!pos.getWhiteMove())
+                if (!pos.isWhiteMove())
                     kingDist--;
                 if ((pawnDist < kingDist) && (mtrlNoPawns == 0)) {
                     if (BitBoard::northFill(1ULL<<sq) & (1LL << pos.getKingSq(true)))
@@ -664,19 +633,18 @@ Evaluate::pawnBonus(const Position& pos) {
                         bestWPromSq = Position::getSquare(x, 7);
                     }
                 }
-                m &= m-1;
             }
         }
     }
     int bestBPawnDist = 8;
     int bestBPromSq = -1;
-    m = phd.passedPawnsB;
+    m = passedPawnsB;
     if (m != 0) {
         int mtrlNoPawns = pos.wMtrl() - pos.wMtrlPawns();
         if (mtrlNoPawns < hiMtrl) {
             int kingPos = pos.getKingSq(true);
             while (m != 0) {
-                int sq = BitBoard::numberOfTrailingZeros(m);
+                int sq = BitBoard::extractSquare(m);
                 int x = Position::getX(sq);
                 int y = Position::getY(sq);
                 int pawnDist = std::min(5, y);
@@ -684,7 +652,7 @@ Evaluate::pawnBonus(const Position& pos) {
                 int kScore = kingDist * 4;
                 if (kingDist > pawnDist) kScore += (kingDist - pawnDist) * (kingDist - pawnDist);
                 score -= interpolate(kScore, 0, mhd->bPassedPawnIPF);
-                if (pos.getWhiteMove())
+                if (pos.isWhiteMove())
                     kingDist--;
                 if ((pawnDist < kingDist) && (mtrlNoPawns == 0)) {
                     if (BitBoard::southFill(1ULL<<sq) & (1LL << pos.getKingSq(false)))
@@ -694,7 +662,6 @@ Evaluate::pawnBonus(const Position& pos) {
                         bestBPromSq = Position::getSquare(x, 0);
                     }
                 }
-                m &= m-1;
             }
         }
     }
@@ -703,8 +670,8 @@ Evaluate::pawnBonus(const Position& pos) {
     const int prBonus = pawnRaceBonus;
     if (bestWPromSq >= 0) {
         if (bestBPromSq >= 0) {
-            int wPly = bestWPawnDist * 2; if (pos.getWhiteMove()) wPly--;
-            int bPly = bestBPawnDist * 2; if (!pos.getWhiteMove()) bPly--;
+            int wPly = bestWPawnDist * 2; if (pos.isWhiteMove()) wPly--;
+            int bPly = bestBPawnDist * 2; if (!pos.isWhiteMove()) bPly--;
             if (wPly < bPly - 1) {
                 score += prBonus;
             } else if (wPly == bPly - 1) {
@@ -758,6 +725,77 @@ evalConnectedPP(int x, int y, U64 ppMask) {
     return connectedPPBonus[(y-1)*6 + (y2-1)];
 }
 
+/** Compute subset of squares given by mask that white is in control over, ie
+ *  squares that have at least as many white pawn guards as black has pawn
+ *  attacks on the square. */
+static inline U64
+wPawnCtrlSquares(U64 mask, U64 wPawns, U64 bPawns) {
+    U64 wLAtks = (wPawns & BitBoard::maskBToHFiles) << 7;
+    U64 wRAtks = (wPawns & BitBoard::maskAToGFiles) << 9;
+    U64 bLAtks = (bPawns & BitBoard::maskBToHFiles) >> 9;
+    U64 bRAtks = (bPawns & BitBoard::maskAToGFiles) >> 7;
+    return ((mask & ~bLAtks & ~bRAtks) |
+            (mask & (bLAtks ^ bRAtks) & (wLAtks | wRAtks)) |
+            (mask & wLAtks & wRAtks));
+}
+
+static inline U64
+bPawnCtrlSquares(U64 mask, U64 wPawns, U64 bPawns) {
+    U64 wLAtks = (wPawns & BitBoard::maskBToHFiles) << 7;
+    U64 wRAtks = (wPawns & BitBoard::maskAToGFiles) << 9;
+    U64 bLAtks = (bPawns & BitBoard::maskBToHFiles) >> 9;
+    U64 bRAtks = (bPawns & BitBoard::maskAToGFiles) >> 7;
+    return ((mask & ~wLAtks & ~wRAtks) |
+            (mask & (wLAtks ^ wRAtks) & (bLAtks | bRAtks)) |
+            (mask & bLAtks & bRAtks));
+}
+
+U64
+Evaluate::computeStalePawns(const Position& pos) {
+    const U64 wPawns = pos.pieceTypeBB(Piece::WPAWN);
+    const U64 bPawns = pos.pieceTypeBB(Piece::BPAWN);
+
+    // Compute stale white pawns
+    U64 wStale;
+    {
+        U64 wPawnCtrl = wPawnCtrlSquares(wPawns, wPawns, bPawns);
+        for (int i = 0; i < 4; i++)
+            wPawnCtrl |= wPawnCtrlSquares((wPawnCtrl << 8) & ~bPawns, wPawnCtrl, bPawns);
+        wPawnCtrl &= ~BitBoard::maskRow8;
+        U64 wPawnCtrlLAtk = (wPawnCtrl & BitBoard::maskBToHFiles) << 7;
+        U64 wPawnCtrlRAtk = (wPawnCtrl & BitBoard::maskAToGFiles) << 9;
+
+        U64 bLAtks = (bPawns & BitBoard::maskBToHFiles) >> 9;
+        U64 bRAtks = (bPawns & BitBoard::maskAToGFiles) >> 7;
+        U64 wActive = ((bLAtks ^ bRAtks) |
+                       (bLAtks & bRAtks & (wPawnCtrlLAtk | wPawnCtrlRAtk)));
+        for (int i = 0; i < 4; i++)
+            wActive |= (wActive & ~(wPawns | bPawns)) >> 8;
+        wStale = wPawns & ~wActive;
+    }
+
+    // Compute stale black pawns
+    U64 bStale;
+    {
+        U64 bPawnCtrl = bPawnCtrlSquares(bPawns, wPawns, bPawns);
+        for (int i = 0; i < 4; i++)
+            bPawnCtrl |= bPawnCtrlSquares((bPawnCtrl >> 8) & ~wPawns, wPawns, bPawnCtrl);
+        bPawnCtrl &= ~BitBoard::maskRow1;
+        U64 bPawnCtrlLAtk = (bPawnCtrl & BitBoard::maskBToHFiles) >> 9;
+        U64 bPawnCtrlRAtk = (bPawnCtrl & BitBoard::maskAToGFiles) >> 7;
+
+        U64 wLAtks = (wPawns & BitBoard::maskBToHFiles) << 7;
+        U64 wRAtks = (wPawns & BitBoard::maskAToGFiles) << 9;
+        U64 bActive = ((wLAtks ^ wRAtks) |
+                       (wLAtks & wRAtks & (bPawnCtrlLAtk | bPawnCtrlRAtk)));
+        for (int i = 0; i < 4; i++)
+            bActive |= (bActive & ~(wPawns | bPawns)) << 8;
+        bStale = bPawns & ~bActive;
+    }
+
+    return wStale | bStale;
+}
+
 void
 Evaluate::computePawnHashData(const Position& pos, PawnHashData& ph) {
     int score = 0;
@@ -776,16 +814,14 @@ Evaluate::computePawnHashData(const Position& pos, PawnHashData& ph) {
     const U64 wDoubled = BitBoard::northFill(wPawns << 8) & wPawns;
     U64 m = wDoubled;
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         score -= pawnDoubledPenalty[Position::getX(sq)];
-        m &= m-1;
     }
     const U64 bDoubled = BitBoard::southFill(bPawns >> 8) & bPawns;
     m = bDoubled;
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         score += pawnDoubledPenalty[Position::getX(sq)];
-        m &= m-1;
     }
 
     // Evaluate isolated pawns
@@ -794,18 +830,16 @@ Evaluate::computePawnHashData(const Position& pos, PawnHashData& ph) {
             ((wPawns & BitBoard::maskBToHFiles) >> 1)));
     m = wIsolated;
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         score -= pawnIsolatedPenalty[Position::getX(sq)];
-        m &= m-1;
     }
     const U64 bIsolated = bPawns & ~BitBoard::northFill(BitBoard::southFill(
             ((bPawns & BitBoard::maskAToGFiles) << 1) |
             ((bPawns & BitBoard::maskBToHFiles) >> 1)));
     m = bIsolated;
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         score += pawnIsolatedPenalty[Position::getX(sq)];
-        m &= m-1;
     }
 
     // Evaluate backward pawns, defined as a pawn that guards a friendly pawn,
@@ -839,17 +873,13 @@ Evaluate::computePawnHashData(const Position& pos, PawnHashData& ph) {
     U64 passedPawnsW = wPawns & ~BitBoard::southFill(bPawns | bPawnAttacks | (wPawns >> 8));
     int passedBonusW = 0;
     if (passedPawnsW != 0) {
-        U64 guardedPassedW = passedPawnsW & wPawnAttacks;
-        if (pos.wMtrl() - pos.wMtrlPawns() == pos.bMtrl() - pos.bMtrlPawns())
-            passedBonusW += pawnGuardedPassedBonus * BitBoard::bitCount(guardedPassedW);
         U64 m = passedPawnsW;
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             int x = Position::getX(sq);
             int y = Position::getY(sq);
             passedBonusW += passedPawnBonusX[x] + passedPawnBonusY[y];
             passedBonusW += evalConnectedPP<true>(x, y, passedPawnsW);
-            m &= m-1;
         }
     }
 
@@ -857,17 +887,13 @@ Evaluate::computePawnHashData(const Position& pos, PawnHashData& ph) {
     U64 passedPawnsB = bPawns & ~BitBoard::northFill(wPawns | wPawnAttacks | (bPawns << 8));
     int passedBonusB = 0;
     if (passedPawnsB != 0) {
-        U64 guardedPassedB = passedPawnsB & bPawnAttacks;
-        if (pos.wMtrl() - pos.wMtrlPawns() == pos.bMtrl() - pos.bMtrlPawns())
-            passedBonusB += pawnGuardedPassedBonus * BitBoard::bitCount(guardedPassedB);
         U64 m = passedPawnsB;
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             int x = Position::getX(sq);
             int y = Position::getY(sq);
             passedBonusB += passedPawnBonusX[x] + passedPawnBonusY[7-y];
             passedBonusB += evalConnectedPP<false>(x, y, passedPawnsB);
-            m &= m-1;
         }
     }
 
@@ -887,59 +913,52 @@ Evaluate::computePawnHashData(const Position& pos, PawnHashData& ph) {
     {
         U64 m = wCandidates;
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             int y = Position::getY(sq);
             passedBonusW += candidatePassedBonus[y];
-            m &= m-1;
         }
     }
     {
         U64 m = bCandidates;
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             int y = Position::getY(sq);
             passedBonusB += candidatePassedBonus[7-y];
-            m &= m-1;
         }
     }
 
     { // Bonus for pawns protected by pawns
         U64 m = wPawnAttacks & wPawns;
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             score += protectedPawnBonus[63-sq];
-            m &= m-1;
         }
         m = bPawnAttacks & bPawns;
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             score -= protectedPawnBonus[sq];
-            m &= m-1;
         }
     }
     { // Bonus for pawns attacked by pawns
         U64 m = wPawnAttacks & bPawns;
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             score += attackedPawnBonus[63-sq];
-            m &= m-1;
         }
         m = bPawnAttacks & wPawns;
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             score -= attackedPawnBonus[sq];
-            m &= m-1;
         }
     }
 
     ph.key = pos.pawnZobristHash();
     ph.score = score;
-    ph.passedBonusW = (short)passedBonusW;
-    ph.passedBonusB = (short)passedBonusB;
-    ph.passedPawnsW = passedPawnsW;
-    ph.passedPawnsB = passedPawnsB;
+    ph.passedBonusW = (S16)passedBonusW;
+    ph.passedBonusB = (S16)passedBonusB;
+    ph.passedPawns = passedPawnsW | passedPawnsB;
+    ph.stalePawns = computeStalePawns(pos) & ~passedPawnsW & ~passedPawnsB;
 }
-
 
 int
 Evaluate::rookBonus(const Position& pos) {
@@ -949,7 +968,7 @@ Evaluate::rookBonus(const Position& pos) {
     const U64 occupied = pos.occupiedBB();
     U64 m = pos.pieceTypeBB(Piece::WROOK);
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         const int x = Position::getX(sq);
         if ((wPawns & BitBoard::maskFile[x]) == 0) // At least half-open file
             score += (bPawns & BitBoard::maskFile[x]) == 0 ? rookOpenBonus : rookHalfOpenBonus;
@@ -958,7 +977,6 @@ Evaluate::rookBonus(const Position& pos) {
         score += rookMobScore[BitBoard::bitCount(atk & ~(pos.whiteBB() | bPawnAttacks))];
         if ((atk & bKingZone) != 0)
             bKingAttacks += BitBoard::bitCount(atk & bKingZone);
-        m &= m-1;
     }
     U64 r7 = pos.pieceTypeBB(Piece::WROOK) & BitBoard::maskRow7;
     if (((r7 & (r7 - 1)) != 0) &&
@@ -966,7 +984,7 @@ Evaluate::rookBonus(const Position& pos) {
         score += rookDouble7thRowBonus; // Two rooks on 7:th row
     m = pos.pieceTypeBB(Piece::BROOK);
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         const int x = Position::getX(sq);
         if ((bPawns & BitBoard::maskFile[x]) == 0)
             score -= (wPawns & BitBoard::maskFile[x]) == 0 ? rookOpenBonus : rookHalfOpenBonus;
@@ -975,7 +993,6 @@ Evaluate::rookBonus(const Position& pos) {
         score -= rookMobScore[BitBoard::bitCount(atk & ~(pos.blackBB() | wPawnAttacks))];
         if ((atk & wKingZone) != 0)
             wKingAttacks += BitBoard::bitCount(atk & wKingZone);
-        m &= m-1;
     }
     r7 = pos.pieceTypeBB(Piece::BROOK) & BitBoard::maskRow2;
     if (((r7 & (r7 - 1)) != 0) &&
@@ -994,23 +1011,21 @@ Evaluate::bishopEval(const Position& pos, int oldScore) {
         return 0;
     U64 m = wBishops;
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         U64 atk = BitBoard::bishopAttacks(sq, occupied);
         wAttacksBB |= atk;
         score += bishMobScore[BitBoard::bitCount(atk & ~(pos.whiteBB() | bPawnAttacks))];
         if ((atk & bKingZone) != 0)
             bKingAttacks += BitBoard::bitCount(atk & bKingZone);
-        m &= m-1;
     }
     m = bBishops;
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         U64 atk = BitBoard::bishopAttacks(sq, occupied);
         bAttacksBB |= atk;
         score -= bishMobScore[BitBoard::bitCount(atk & ~(pos.blackBB() | wPawnAttacks))];
         if ((atk & wKingZone) != 0)
             wKingAttacks += BitBoard::bitCount(atk & wKingZone);
-        m &= m-1;
     }
 
     bool whiteDark  = (wBishops & BitBoard::maskDarkSq ) != 0;
@@ -1023,12 +1038,12 @@ Evaluate::bishopEval(const Position& pos, int oldScore) {
     // Bishop pair bonus
     if (numWhite == 2) {
         int numMinors = BitBoard::bitCount(pos.pieceTypeBB(Piece::BBISHOP, Piece::BKNIGHT));
-        const int numPawns = pos.wMtrlPawns() / pV;
+        const int numPawns = BitBoard::bitCount(pos.pieceTypeBB(Piece::WPAWN));
         score += bishopPairValue[std::min(numMinors,3)] - numPawns * bishopPairPawnPenalty;
     }
     if (numBlack == 2) {
         int numMinors = BitBoard::bitCount(pos.pieceTypeBB(Piece::WBISHOP, Piece::WKNIGHT));
-        const int numPawns = pos.bMtrlPawns() / pV;
+        const int numPawns = BitBoard::bitCount(pos.pieceTypeBB(Piece::BPAWN));
         score -= bishopPairValue[std::min(numMinors,3)] - numPawns * bishopPairPawnPenalty;
     }
 
@@ -1086,29 +1101,26 @@ Evaluate::knightEval(const Position& pos) {
     // Knight mobility
     U64 m = wKnights;
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         U64 atk = BitBoard::knightAttacks[sq];
         wAttacksBB |= atk;
         score += knightMobScoreA[sq][BitBoard::bitCount(atk & ~pos.whiteBB() & ~bPawnAttacks)];
-        m &= m-1;
     }
 
     m = bKnights;
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         U64 atk = BitBoard::knightAttacks[sq];
         bAttacksBB |= atk;
         score -= knightMobScoreA[sq][BitBoard::bitCount(atk & ~pos.blackBB() & ~wPawnAttacks)];
-        m &= m-1;
     }
 
     m = wKnights & phd->outPostsW;
     if (m != 0) {
         int outPost = 0;
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             outPost += knightOutpostBonus[63-sq];
-            m &= m-1;
         }
         score += interpolate(0, outPost, mhd->wKnightOutPostIPF);
     }
@@ -1117,9 +1129,8 @@ Evaluate::knightEval(const Position& pos) {
     if (m != 0) {
         int outPost = 0;
         while (m != 0) {
-            int sq = BitBoard::numberOfTrailingZeros(m);
+            int sq = BitBoard::extractSquare(m);
             outPost += knightOutpostBonus[sq];
-            m &= m-1;
         }
         score -= interpolate(0, outPost, mhd->bKnightOutPostIPF);
     }
@@ -1137,9 +1148,8 @@ Evaluate::threatBonus(const Position& pos) {
     U64 m = wAttacksBB & pos.blackBB() & ~pos.pieceTypeBB(Piece::BKING);
     int tmp = 0;
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         tmp += ::pieceValue[pos.getPiece(sq)];
-        m &= m-1;
     }
     score += tmp + tmp * tmp / threatBonus2;
 
@@ -1149,12 +1159,25 @@ Evaluate::threatBonus(const Position& pos) {
     m = bAttacksBB & pos.whiteBB() & ~pos.pieceTypeBB(Piece::WKING);
     tmp = 0;
     while (m != 0) {
-        int sq = BitBoard::numberOfTrailingZeros(m);
+        int sq = BitBoard::extractSquare(m);
         tmp += ::pieceValue[pos.getPiece(sq)];
-        m &= m-1;
     }
     score -= tmp + tmp * tmp / threatBonus2;
     return score / threatBonus1;
+}
+
+int
+Evaluate::protectBonus(const Position& pos) {
+    int score = 0;
+    score += BitBoard::bitCount(pos.pieceTypeBB(Piece::WKNIGHT) & wPawnAttacks) * ::protectBonus[0];
+    score += BitBoard::bitCount(pos.pieceTypeBB(Piece::WBISHOP) & wPawnAttacks) * ::protectBonus[1];
+    score += BitBoard::bitCount(pos.pieceTypeBB(Piece::WROOK  ) & wPawnAttacks) * ::protectBonus[2];
+    score += BitBoard::bitCount(pos.pieceTypeBB(Piece::WQUEEN ) & wPawnAttacks) * ::protectBonus[3];
+    score -= BitBoard::bitCount(pos.pieceTypeBB(Piece::BKNIGHT) & bPawnAttacks) * ::protectBonus[0];
+    score -= BitBoard::bitCount(pos.pieceTypeBB(Piece::BBISHOP) & bPawnAttacks) * ::protectBonus[1];
+    score -= BitBoard::bitCount(pos.pieceTypeBB(Piece::BROOK  ) & bPawnAttacks) * ::protectBonus[2];
+    score -= BitBoard::bitCount(pos.pieceTypeBB(Piece::BQUEEN ) & bPawnAttacks) * ::protectBonus[3];
+    return score;
 }
 
 /** Compute king safety for both kings. */
@@ -1171,29 +1194,29 @@ Evaluate::kingSafety(const Position& pos) {
     if (Position::getY(wKing) == 0) {
         if (((pos.pieceTypeBB(Piece::WKING) & BitBoard::sqMask(F1,G1)) != 0) &&
             ((pos.pieceTypeBB(Piece::WROOK) & BitBoard::sqMask(G1,H1)) != 0) &&
-            ((pos.pieceTypeBB(Piece::WPAWN) & BitBoard::maskFile[6]) != 0) &&
-            ((pos.pieceTypeBB(Piece::WPAWN) & BitBoard::maskFile[7]) != 0)) {
-            score -= trappedRookPenalty;
+            ((pos.pieceTypeBB(Piece::WPAWN) & BitBoard::maskFile[6]) != 0)) {
+            score -= ((pos.pieceTypeBB(Piece::WPAWN) & BitBoard::maskFile[7]) != 0) ?
+                     trappedRookPenalty1 : trappedRookPenalty2;
         } else
         if (((pos.pieceTypeBB(Piece::WKING) & BitBoard::sqMask(B1,C1)) != 0) &&
             ((pos.pieceTypeBB(Piece::WROOK) & BitBoard::sqMask(A1,B1)) != 0) &&
-            ((pos.pieceTypeBB(Piece::WPAWN) & BitBoard::maskFile[0]) != 0) &&
             ((pos.pieceTypeBB(Piece::WPAWN) & BitBoard::maskFile[1]) != 0)) {
-            score -= trappedRookPenalty;
+            score -= ((pos.pieceTypeBB(Piece::WPAWN) & BitBoard::maskFile[0]) != 0) ?
+                     trappedRookPenalty1 : trappedRookPenalty2;
         }
     }
     if (Position::getY(bKing) == 7) {
         if (((pos.pieceTypeBB(Piece::BKING) & BitBoard::sqMask(F8,G8)) != 0) &&
             ((pos.pieceTypeBB(Piece::BROOK) & BitBoard::sqMask(G8,H8)) != 0) &&
-            ((pos.pieceTypeBB(Piece::BPAWN) & BitBoard::maskFile[6]) != 0) &&
-            ((pos.pieceTypeBB(Piece::BPAWN) & BitBoard::maskFile[7]) != 0)) {
-            score += trappedRookPenalty;
+            ((pos.pieceTypeBB(Piece::BPAWN) & BitBoard::maskFile[6]) != 0)) {
+            score += ((pos.pieceTypeBB(Piece::BPAWN) & BitBoard::maskFile[7]) != 0) ?
+                     trappedRookPenalty1 : trappedRookPenalty2;
         } else
         if (((pos.pieceTypeBB(Piece::BKING) & BitBoard::sqMask(B8,C8)) != 0) &&
             ((pos.pieceTypeBB(Piece::BROOK) & BitBoard::sqMask(A8,B8)) != 0) &&
-            ((pos.pieceTypeBB(Piece::BPAWN) & BitBoard::maskFile[0]) != 0) &&
             ((pos.pieceTypeBB(Piece::BPAWN) & BitBoard::maskFile[1]) != 0)) {
-            score += trappedRookPenalty;
+            score += ((pos.pieceTypeBB(Piece::BPAWN) & BitBoard::maskFile[0]) != 0) ?
+                     trappedRookPenalty1 : trappedRookPenalty2;
         }
     }
 
@@ -1203,7 +1226,7 @@ Evaluate::kingSafety(const Position& pos) {
     score -= BitBoard::bitCount(Evaluate::knightKingProtectPattern[bKing] & pos.pieceTypeBB(Piece::BKNIGHT)) * knightKingProtectBonus;
     score -= BitBoard::bitCount(Evaluate::bishopKingProtectPattern[bKing] & pos.pieceTypeBB(Piece::BBISHOP)) * bishopKingProtectBonus;
 
-    score += kingAttackWeight[std::min(bKingAttacks, 9)] - kingAttackWeight[std::min(wKingAttacks, 9)];
+    score += kingAttackWeight[std::min(bKingAttacks, 13)] - kingAttackWeight[std::min(wKingAttacks, 13)];
     const int kSafety = interpolate(0, score, mhd->kingSafetyIPF);
     return kSafety;
 }
@@ -1238,7 +1261,7 @@ evalKingPawnShelter(const Position& pos) {
 int
 Evaluate::kingSafetyKPPart(const Position& pos) {
     const U64 key = pos.pawnZobristHash() ^ pos.kingZobristHash();
-    KingSafetyHashData& ksh = kingSafetyHash[(int)key & (kingSafetyHash.size() - 1)];
+    KingSafetyHashData& ksh = getKingSafetyHashEntry(kingSafetyHash, key);
     if (ksh.key != key) {
         int score = 0;
         const U64 wPawns = pos.pieceTypeBB(Piece::WPAWN);
@@ -1326,15 +1349,13 @@ Evaluate::kingSafetyKPPart(const Position& pos) {
         if (kingDiff > 1) {
             U64 m = wPawns & pStormMask[bKingZone];
             while (m != 0) {
-                int sq = BitBoard::numberOfTrailingZeros(m);
+                int sq = BitBoard::extractSquare(m);
                 score += pawnStormBonus * (Position::getY(sq)-5);
-                m &= m - 1;
             }
             m = bPawns & pStormMask[wKingZone];
             while (m != 0) {
-                int sq = BitBoard::numberOfTrailingZeros(m);
+                int sq = BitBoard::extractSquare(m);
                 score += pawnStormBonus * (Position::getY(sq)-2);
-                m &= m - 1;
             }
         }
 
@@ -1344,785 +1365,16 @@ Evaluate::kingSafetyKPPart(const Position& pos) {
     return ksh.score;
 }
 
-/** Implements special knowledge for some endgame situations. */
-template <bool doEval>
-int
-Evaluate::endGameEval(const Position& pos, int oldScore) const {
-    int score = oldScore;
-    const int wMtrlPawns = pos.wMtrlPawns();
-    const int bMtrlPawns = pos.bMtrlPawns();
-    const int wMtrlNoPawns = pos.wMtrl() - wMtrlPawns;
-    const int bMtrlNoPawns = pos.bMtrl() - bMtrlPawns;
-
-    // Handle special endgames
-    typedef MatId MI;
-    switch (pos.materialId()) {
-    case 0:
-    case MI::WN: case MI::BN: case MI::WB: case MI::BB:
-    case MI::WN + MI::BN: case MI::WN + MI::BB:
-    case MI::WB + MI::BN: case MI::WB + MI::BB:
-        if (!doEval) return 1;
-        return 0; // King + minor piece vs king + minor piece is a draw
-    case MI::WQ + MI::BP: {
-        if (!doEval) return 1;
-        int wk = pos.getKingSq(true);
-        int wq = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WQUEEN));
-        int bk = pos.getKingSq(false);
-        int bp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BPAWN));
-        return kqkpEval(wk, wq, bk, bp, pos.getWhiteMove(), score);
-    }
-    case MI::BQ + MI::WP: {
-        if (!doEval) return 1;
-        int bk = pos.getKingSq(false);
-        int bq = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BQUEEN));
-        int wk = pos.getKingSq(true);
-        int wp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WPAWN));
-        return -kqkpEval(63-bk, 63-bq, 63-wk, 63-wp, !pos.getWhiteMove(), -score);
-    }
-    case MI::WQ: {
-        if (!doEval) return 1;
-        if (!pos.getWhiteMove() &&
-            (pos.pieceTypeBB(Piece::BKING) & BitBoard::maskCorners) &&
-            (pos.pieceTypeBB(Piece::WQUEEN) & BitBoard::sqMask(C2,B3,F2,G3,B6,C7,G6,F7)) &&
-            (BitBoard::getTaxiDistance(pos.getKingSq(false),
-                                       BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WQUEEN))) == 3))
-            return 0;
-        break;
-    }
-    case MI::BQ: {
-        if (!doEval) return 1;
-        if (pos.getWhiteMove() &&
-            (pos.pieceTypeBB(Piece::WKING) & BitBoard::maskCorners) &&
-            (pos.pieceTypeBB(Piece::BQUEEN) & BitBoard::sqMask(C2,B3,F2,G3,B6,C7,G6,F7)) &&
-            (BitBoard::getTaxiDistance(pos.getKingSq(true),
-                                       BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BQUEEN))) == 3))
-            return 0;
-        break;
-    }
-    case MI::WR + MI::BP: {
-        if (!doEval) return 1;
-        int bp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BPAWN));
-        return krkpEval(pos.getKingSq(true), pos.getKingSq(false),
-                        bp, pos.getWhiteMove(), score);
-    }
-    case MI::BR + MI::WP: {
-        if (!doEval) return 1;
-        int wp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WPAWN));
-        return -krkpEval(63-pos.getKingSq(false), 63-pos.getKingSq(true),
-                         63-wp, !pos.getWhiteMove(), -score);
-    }
-    case MI::WR + MI::BB: {
-        if (!doEval) return 1;
-        score /= 8;
-        const int kSq = pos.getKingSq(false);
-        const int x = Position::getX(kSq);
-        const int y = Position::getY(kSq);
-        if ((pos.pieceTypeBB(Piece::BBISHOP) & BitBoard::maskDarkSq) != 0)
-            score += (7 - distToH1A8[7-y][7-x]) * 7;
-        else
-            score += (7 - distToH1A8[7-y][x]) * 7;
-        return score;
-    }
-    case MI::BR + MI::WB: {
-        if (!doEval) return 1;
-        score /= 8;
-        const int kSq = pos.getKingSq(true);
-        const int x = Position::getX(kSq);
-        const int y = Position::getY(kSq);
-        if ((pos.pieceTypeBB(Piece::WBISHOP) & BitBoard::maskDarkSq) != 0)
-            score -= (7 - distToH1A8[7-y][7-x]) * 7;
-        else
-            score -= (7 - distToH1A8[7-y][x]) * 7;
-        return score;
-    }
-    case MI::WR + MI::WP + MI::BR: {
-        if (!doEval) return 1;
-        int wk = pos.getKingSq(true);
-        int bk = pos.getKingSq(false);
-        int wp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WPAWN));
-        int wr = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WROOK));
-        int br = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BROOK));
-        return krpkrEval(wk, bk, wp, wr, br, pos.getWhiteMove());
-    }
-    case MI::BR + MI::BP + MI::WR: {
-        if (!doEval) return 1;
-        int wk = pos.getKingSq(true);
-        int bk = pos.getKingSq(false);
-        int bp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BPAWN));
-        int wr = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WROOK));
-        int br = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BROOK));
-        return -krpkrEval(63-bk, 63-wk, 63-bp, 63-br, 63-wr, !pos.getWhiteMove());
-    }
-    case MI::WR + MI::WP + MI::BR + MI::BP: {
-        if (!doEval) return 1;
-        int wk = pos.getKingSq(true);
-        int bk = pos.getKingSq(false);
-        int wp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WPAWN));
-        int wr = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WROOK));
-        int br = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BROOK));
-        int bp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BPAWN));
-        return krpkrpEval(wk, bk, wp, wr, br, bp, pos.getWhiteMove(), score);
-    }
-    case MI::WN * 2:
-    case MI::BN * 2:
-        if (!doEval) return 1;
-        return 0; // KNNK is a draw
-    case MI::WN + MI::WB: {
-        if (!doEval) return 1;
-        bool darkBishop = (pos.pieceTypeBB(Piece::WBISHOP) & BitBoard::maskDarkSq) != 0;
-        return kbnkEval(pos.getKingSq(true), pos.getKingSq(false), darkBishop);
-    }
-    case MI::BN + MI::BB: {
-        if (!doEval) return 1;
-        bool darkBishop = (pos.pieceTypeBB(Piece::BBISHOP) & BitBoard::maskDarkSq) != 0;
-        return -kbnkEval(63-pos.getKingSq(false), 63-pos.getKingSq(true), darkBishop);
-    }
-    case MI::WP: {
-        if (!doEval) return 1;
-        int wp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WPAWN));
-        return kpkEval(pos.getKingSq(true), pos.getKingSq(false),
-                       wp, pos.getWhiteMove());
-    }
-    case MI::BP: {
-        if (!doEval) return 1;
-        int bp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BPAWN));
-        return -kpkEval(63-pos.getKingSq(false), 63-pos.getKingSq(true),
-                        63-bp, !pos.getWhiteMove());
-    }
-    case MI::WP + MI::BP: {
-        if (!doEval) return 1;
-        int wk = pos.getKingSq(true);
-        int bk = pos.getKingSq(false);
-        int wp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WPAWN));
-        int bp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BPAWN));
-        if (kpkpEval(wk, bk, wp, bp, score))
-            return score;
-        break;
-    }
-    case MI::WB + MI::WP + MI::BB: {
-        if (!doEval) return 1;
-        int wb = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WBISHOP));
-        int wp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WPAWN));
-        int bb = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BBISHOP));
-        return kbpkbEval(pos.getKingSq(true), wb, wp, pos.getKingSq(false), bb, score);
-    }
-    case MI::BB + MI::BP + MI::WB: {
-        if (!doEval) return 1;
-        int bb = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BBISHOP));
-        int bp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BPAWN));
-        int wb = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WBISHOP));
-        return -kbpkbEval(63-pos.getKingSq(false), 63-bb, 63-bp, 63-pos.getKingSq(true), 63-wb, -score);
-    }
-    case MI::WB + MI::WP + MI::BN: {
-        if (!doEval) return 1;
-        int wb = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WBISHOP));
-        int wp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WPAWN));
-        int bn = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BKNIGHT));
-        return kbpknEval(pos.getKingSq(true), wb, wp, pos.getKingSq(false), bn, score);
-    }
-    case MI::BB + MI::BP + MI::WN: {
-        if (!doEval) return 1;
-        int bb = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BBISHOP));
-        int bp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BPAWN));
-        int wn = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WKNIGHT));
-        return -kbpknEval(63-pos.getKingSq(false), 63-bb, 63-bp, 63-pos.getKingSq(true), 63-wn, -score);
-    }
-    case MI::WN + MI::WP + MI::BB: {
-        if (!doEval) return 1;
-        int wn = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WKNIGHT));
-        int wp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WPAWN));
-        int bb = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BBISHOP));
-        return knpkbEval(pos.getKingSq(true), wn, wp, pos.getKingSq(false), bb,
-                         score, pos.getWhiteMove());
-    }
-    case MI::BN + MI::BP + MI::WB: {
-        if (!doEval) return 1;
-        int bn = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BKNIGHT));
-        int bp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BPAWN));
-        int wb = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WBISHOP));
-        return -knpkbEval(63-pos.getKingSq(false), 63-bn, 63-bp, 63-pos.getKingSq(true), 63-wb,
-                          -score, !pos.getWhiteMove());
-    }
-    case MI::WN + MI::WP: {
-        if (!doEval) return 1;
-        int wn = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WKNIGHT));
-        int wp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::WPAWN));
-        return knpkEval(pos.getKingSq(true), wn, wp, pos.getKingSq(false),
-                        score, pos.getWhiteMove());
-    }
-    case MI::BN + MI::BP: {
-        if (!doEval) return 1;
-        int bn = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BKNIGHT));
-        int bp = BitBoard::numberOfTrailingZeros(pos.pieceTypeBB(Piece::BPAWN));
-        return -knpkEval(63-pos.getKingSq(false), 63-bn, 63-bp, 63-pos.getKingSq(true),
-                         -score, !pos.getWhiteMove());
-    }
-    }
-
-    const int nWN = BitBoard::bitCount(pos.pieceTypeBB(Piece::WKNIGHT));
-    const int nBN = BitBoard::bitCount(pos.pieceTypeBB(Piece::BKNIGHT));
-    const int nWB1 = BitBoard::bitCount(pos.pieceTypeBB(Piece::WBISHOP) & BitBoard::maskLightSq);
-    const int nWB2 = BitBoard::bitCount(pos.pieceTypeBB(Piece::WBISHOP) & BitBoard::maskDarkSq);
-    const int nBB1 = BitBoard::bitCount(pos.pieceTypeBB(Piece::BBISHOP) & BitBoard::maskLightSq);
-    const int nBB2 = BitBoard::bitCount(pos.pieceTypeBB(Piece::BBISHOP) & BitBoard::maskDarkSq);
-    const int qV = ::qV;
-
-    if (pos.materialId() == MI::WB * 2 + MI::BN) {
-        if (!doEval) return 1;
-        if (nWB1 == 1)
-            return 100 + mateEval(pos.getKingSq(true), pos.getKingSq(false));
-    }
-    if (pos.materialId() == MI::BB * 2 + MI::WN) {
-        if (!doEval) return 1;
-        if (nBB1 == 1)
-            return -(100 + mateEval(pos.getKingSq(false), pos.getKingSq(true)));
-    }
-
-    // Bonus for K[BN][BN]KQ
-    if ((pos.bMtrl() == qV) && pos.pieceTypeBB(Piece::BQUEEN) && ((nWN >= 2) || (nWB1 + nWB2 >= 2))) {
-        if (!doEval) return 1;
-        if ((score < 0) && ((nWN >= 2) || ((nWB1 >= 1) && (nWB2 >= 1))))
-            return -((pos.bMtrl() - pos.wMtrl()) / 8 + mateEval(pos.getKingSq(false), pos.getKingSq(true)));
-    }
-    if ((pos.wMtrl() == qV) && pos.pieceTypeBB(Piece::WQUEEN) && ((nBN >= 2) || (nBB1 + nBB2 >= 2))) {
-        if (!doEval) return 1;
-        if ((score > 0) && ((nBN >= 2) || ((nBB1 >= 1) && (nBB2 >= 1))))
-            return (pos.wMtrl() - pos.bMtrl()) / 8 + mateEval(pos.getKingSq(true), pos.getKingSq(false));
-    }
-    if ((pos.bMtrl() == qV) && pos.pieceTypeBB(Piece::BQUEEN) && ((nWN >= 1) && (nWB1 + nWB2 >= 1))) {
-        if (!doEval) return 1;
-        if (score < 0)
-            return -((pos.bMtrl() - pos.wMtrl()) / 2 + mateEval(pos.getKingSq(false), pos.getKingSq(true)));
-    }
-    if ((pos.wMtrl() == qV) && pos.pieceTypeBB(Piece::WQUEEN) && ((nBN >= 1) && (nBB1 + nBB2 >= 1))) {
-        if (!doEval) return 1;
-        if (score > 0)
-            return (pos.wMtrl() - pos.bMtrl()) / 2 + mateEval(pos.getKingSq(true), pos.getKingSq(false));
-    }
-
-    // Bonus for KRK
-    if ((pos.bMtrl() == 0) && pos.pieceTypeBB(Piece::WROOK)) {
-        if (!doEval) return 1;
-        return 400 + pos.wMtrl() - pos.bMtrl() + mateEval(pos.getKingSq(true), pos.getKingSq(false));
-    }
-    if ((pos.wMtrl() == 0) && pos.pieceTypeBB(Piece::BROOK)) {
-        if (!doEval) return 1;
-        return -(400 + pos.bMtrl() - pos.wMtrl() + mateEval(pos.getKingSq(false), pos.getKingSq(true)));
-    }
-
-    // Bonus for KQK[BN]
-    const int bV = ::bV;
-    const int nV = ::nV;
-    if (pos.pieceTypeBB(Piece::WQUEEN) && (pos.bMtrlPawns() == 0) && (pos.bMtrl() <= std::max(bV,nV))) {
-        if (!doEval) return 1;
-        return 200 + pos.wMtrl() - pos.bMtrl() + mateEval(pos.getKingSq(true), pos.getKingSq(false));
-    }
-    if (pos.pieceTypeBB(Piece::BQUEEN) && (pos.wMtrlPawns() == 0) && (pos.wMtrl() <= std::max(bV,nV))) {
-        if (!doEval) return 1;
-        return -(200 + pos.bMtrl() - pos.wMtrl() + mateEval(pos.getKingSq(false), pos.getKingSq(true)));
-    }
-
-    // Bonus for KQK
-    if ((pos.bMtrl() == 0) && pos.pieceTypeBB(Piece::WQUEEN)) {
-        if (!doEval) return 1;
-        return 100 + pos.wMtrl() - pos.bMtrl() + mateEval(pos.getKingSq(true), pos.getKingSq(false));
-    }
-    if ((pos.wMtrl() == 0) && pos.pieceTypeBB(Piece::BQUEEN)) {
-        if (!doEval) return 1;
-        return -(100 + pos.bMtrl() - pos.wMtrl() + mateEval(pos.getKingSq(false), pos.getKingSq(true)));
-    }
-
-    if (pos.pieceTypeBB(Piece::WROOK, Piece::WKNIGHT, Piece::WQUEEN) == 0) {
-        if (!doEval) return 1;
-        if ((score > 0) && isBishopPawnDraw<true>(pos))
-            return 0;
-    }
-    if (pos.pieceTypeBB(Piece::BROOK, Piece::BKNIGHT, Piece::BQUEEN) == 0) {
-        if (!doEval) return 1;
-        if ((score < 0) && isBishopPawnDraw<false>(pos))
-            return 0;
-    }
-
-    // Give bonus/penalty if advantage is/isn't large enough to win
-    if ((wMtrlPawns == 0) && (wMtrlNoPawns <= bMtrlNoPawns + bV)) {
-        if (!doEval) return 1;
-        if (score > 0) {
-            if (wMtrlNoPawns < rV)
-                return -pos.bMtrl() / 50;
-            else
-                return score / 8;        // Too little excess material, probably draw
-        }
-    }
-    if ((bMtrlPawns == 0) && (bMtrlNoPawns <= wMtrlNoPawns + bV)) {
-        if (!doEval) return 1;
-        if (score < 0) {
-            if (bMtrlNoPawns < rV)
-                return pos.wMtrl() / 50;
-            else
-                return score / 8;        // Too little excess material, probably draw
-        }
-    }
-
-    if ((bMtrlPawns == 0) && (wMtrlNoPawns - bMtrlNoPawns > bV)) {
-        if (!doEval) return 1;
-        return score + 300;       // Enough excess material, should win
-    }
-    if ((wMtrlPawns == 0) && (bMtrlNoPawns - wMtrlNoPawns > bV)) {
-        if (!doEval) return 1;
-        return score - 300;       // Enough excess material, should win
-    }
-
-    // Give bonus for advantage larger than KRKP, to avoid evaluation discontinuity
-    if ((pos.bMtrl() == pV) && pos.pieceTypeBB(Piece::WROOK) && (pos.wMtrl() > rV)) {
-        if (!doEval) return 1;
-        return score + krkpBonus;
-    }
-    if ((pos.wMtrl() == pV) && pos.pieceTypeBB(Piece::BROOK) && (pos.bMtrl() > rV)) {
-        if (!doEval) return 1;
-        return score - krkpBonus;
-    }
-
-    // Bonus for KRPKN
-    if (pos.pieceTypeBB(Piece::WROOK) && pos.pieceTypeBB(Piece::WPAWN) &&
-        !pos.pieceTypeBB(Piece::BBISHOP) && (pos.bMtrl() == nV)  && (pos.bMtrlPawns() == 0)) {
-        if (!doEval) return 1;
-        return score + krpknBonus;
-    }
-    if (pos.pieceTypeBB(Piece::BROOK) && pos.pieceTypeBB(Piece::BPAWN) &&
-        !pos.pieceTypeBB(Piece::WBISHOP) && (pos.wMtrl() == nV)  && (pos.wMtrlPawns() == 0)) {
-        if (!doEval) return 1;
-        return score - krpknBonus;
-    }
-
-    // Bonus for KRPKB
-    int krpkbAdjustment = 0;
-    if (pos.pieceTypeBB(Piece::WROOK) && pos.pieceTypeBB(Piece::WPAWN) &&
-        !pos.pieceTypeBB(Piece::BKNIGHT) && (pos.bMtrl() == bV)  && (pos.bMtrlPawns() == 0)) {
-        if (!doEval) return 1;
-        score += krpkbBonus;
-        krpkbAdjustment += krpkbBonus;
-    }
-    if (pos.pieceTypeBB(Piece::BROOK) && pos.pieceTypeBB(Piece::BPAWN) &&
-        !pos.pieceTypeBB(Piece::WKNIGHT) && (pos.wMtrl() == bV)  && (pos.wMtrlPawns() == 0)) {
-        if (!doEval) return 1;
-        score -= krpkbBonus;
-        krpkbAdjustment += krpkbBonus;
-    }
-    // Penalty for KRPKB when pawn is on a/h file
-    if ((pos.wMtrl() - pos.wMtrlPawns() == rV) && (pos.wMtrlPawns() <= pV) && pos.pieceTypeBB(Piece::BBISHOP)) {
-        if (!doEval) return 1;
-        if (score - krpkbAdjustment > 0) {
-            U64 pMask = pos.pieceTypeBB(Piece::WPAWN);
-            U64 bMask = pos.pieceTypeBB(Piece::BBISHOP);
-            if (((pMask & BitBoard::maskFile[0]) && (bMask & BitBoard::maskDarkSq)) ||
-                ((pMask & BitBoard::maskFile[7]) && (bMask & BitBoard::maskLightSq))) {
-                score = (score - krpkbAdjustment) * krpkbPenalty / 128;
-                return score;
-            }
-        }
-    }
-    if ((pos.bMtrl() - pos.bMtrlPawns() == rV) && (pos.bMtrlPawns() <= pV) && pos.pieceTypeBB(Piece::WBISHOP)) {
-        if (!doEval) return 1;
-        if (score + krpkbAdjustment < 0) {
-            U64 pMask = pos.pieceTypeBB(Piece::BPAWN);
-            U64 bMask = pos.pieceTypeBB(Piece::WBISHOP);
-            if (((pMask & BitBoard::maskFile[0]) && (bMask & BitBoard::maskLightSq)) ||
-                ((pMask & BitBoard::maskFile[7]) && (bMask & BitBoard::maskDarkSq))) {
-                score = (score + krpkbAdjustment) * krpkbPenalty / 128;
-                return score;
-            }
-        }
-    }
-
-    auto getPawnAsymmetry = [this, &pos]() {
-        int f1 = BitBoard::southFill(pos.pieceTypeBB(Piece::WPAWN)) & 0xff;
-        int f2 = BitBoard::southFill(pos.pieceTypeBB(Piece::BPAWN)) & 0xff;
-        int asymmetry = BitBoard::bitCount((f1 & ~f2) | (f2 & ~f1));
-        asymmetry += BitBoard::bitCount(phd->passedPawnsW) + BitBoard::bitCount(phd->passedPawnsB);
-        return asymmetry;
-    };
-
-    // Account for draw factor in rook endgames
-    if ((BitBoard::bitCount(pos.pieceTypeBB(Piece::WROOK)) == 1) &&
-        (BitBoard::bitCount(pos.pieceTypeBB(Piece::BROOK)) == 1) &&
-        (pos.pieceTypeBB(Piece::WQUEEN, Piece::WBISHOP, Piece::WKNIGHT,
-                         Piece::BQUEEN, Piece::BBISHOP, Piece::BKNIGHT) == 0) &&
-        (BitBoard::bitCount(pos.pieceTypeBB(Piece::WPAWN, Piece::BPAWN)) > 1)) {
-        if (!doEval) return 1;
-        int asymmetry = getPawnAsymmetry();
-        score = score * rookEGDrawFactor[std::min(asymmetry, 6)] / 128;
-        return score;
-    }
-
-    // Correction for draw factor in RvsB endgames
-    if ((BitBoard::bitCount(pos.pieceTypeBB(Piece::WROOK)) == 1) &&
-        (BitBoard::bitCount(pos.pieceTypeBB(Piece::BBISHOP)) == 1) &&
-        (pos.pieceTypeBB(Piece::WQUEEN, Piece::WBISHOP, Piece::WKNIGHT,
-                         Piece::BQUEEN, Piece::BROOK, Piece::BKNIGHT) == 0) &&
-        (pos.wMtrlPawns() - pos.bMtrlPawns() == -pV)) {
-        if (!doEval) return 1;
-        int asymmetry = getPawnAsymmetry();
-        score = score * RvsBPDrawFactor[std::min(asymmetry, 6)] / 128;
-        return score;
-    }
-    // Correction for draw factor in RvsB endgames
-    if ((BitBoard::bitCount(pos.pieceTypeBB(Piece::BROOK)) == 1) &&
-        (BitBoard::bitCount(pos.pieceTypeBB(Piece::WBISHOP)) == 1) &&
-        (pos.pieceTypeBB(Piece::BQUEEN, Piece::BBISHOP, Piece::BKNIGHT,
-                         Piece::WQUEEN, Piece::WROOK, Piece::WKNIGHT) == 0) &&
-        (pos.wMtrlPawns() - pos.bMtrlPawns() == pV)) {
-        if (!doEval) return 1;
-        int asymmetry = getPawnAsymmetry();
-        score = score * RvsBPDrawFactor[std::min(asymmetry, 6)] / 128;
-        return score;
-    }
-
-    if (!doEval) return 0;
-    return score;
-}
-
-template <bool whiteBishop>
-bool
-Evaluate::isBishopPawnDraw(const Position& pos) const {
-    const Piece::Type bishop = whiteBishop ? Piece::WBISHOP : Piece::BBISHOP;
-    const bool darkBishop  = (pos.pieceTypeBB(bishop) & BitBoard::maskDarkSq) != 0;
-    const bool lightBishop = (pos.pieceTypeBB(bishop) & BitBoard::maskLightSq) != 0;
-    if (darkBishop && lightBishop)
-        return false; // No draw against proper bishop pair
-
-    const Piece::Type pawn = whiteBishop ? Piece::WPAWN : Piece::BPAWN;
-    if (pos.pieceTypeBB(pawn) == 0)
-        return true; // Only bishops on same color can not win
-
-    // Check for rook pawn + wrong color bishop
-    if (whiteBishop) {
-        if (((pos.pieceTypeBB(pawn) & BitBoard::maskBToHFiles) == 0) &&
-            !lightBishop &&
-            ((pos.pieceTypeBB(Piece::BKING) & BitBoard::sqMask(A8,B8,A7,B7)) != 0)) {
-            return true;
-        } else
-        if (((pos.pieceTypeBB(pawn) & BitBoard::maskAToGFiles) == 0) &&
-            !darkBishop &&
-            ((pos.pieceTypeBB(Piece::BKING) & BitBoard::sqMask(G8,H8,G7,H7)) != 0)) {
-            return true;
-        }
-    } else {
-        if (((pos.pieceTypeBB(pawn) & BitBoard::maskBToHFiles) == 0) &&
-            !darkBishop &&
-            ((pos.pieceTypeBB(Piece::WKING) & BitBoard::sqMask(A1,B1,A2,B2)) != 0)) {
-            return true;
-        } else
-        if (((pos.pieceTypeBB(pawn) & BitBoard::maskAToGFiles) == 0) &&
-            !lightBishop &&
-            ((pos.pieceTypeBB(Piece::WKING) & BitBoard::sqMask(G1,H1,G2,H2)) != 0)) {
-            return true;
-        }
-    }
-
-    // Check for fortress containing WPb6, BPb7, white bishop on dark square
-    const Piece::Type king = whiteBishop ? Piece::WKING : Piece::BKING;
-    const Piece::Type oPawn = whiteBishop ? Piece::BPAWN : Piece::WPAWN;
-    const Piece::Type oKnight = whiteBishop ? Piece::BKNIGHT : Piece::WKNIGHT;
-    const int b7 = whiteBishop ? (darkBishop ? B7 : G7) : (lightBishop ? B2 : G2);
-    const int b6 = whiteBishop ? (darkBishop ? B6 : G6) : (lightBishop ? B3 : G3);
-    const int c7 = whiteBishop ? (darkBishop ? C7 : F7) : (lightBishop ? C2 : F2);
-    const int a8 = whiteBishop ? (darkBishop ? A8 : H8) : (lightBishop ? A1 : H1);
-    const int b8 = whiteBishop ? (darkBishop ? B8 : G8) : (lightBishop ? B1 : G1);
-    const int c8 = whiteBishop ? (darkBishop ? C8 : F8) : (lightBishop ? C1 : F1);
-    const int d8 = whiteBishop ? (darkBishop ? D8 : E8) : (lightBishop ? D1 : E1);
-    const int d7 = whiteBishop ? (darkBishop ? D7 : E7) : (lightBishop ? D2 : E2);
-    const U64 bFile = (whiteBishop == darkBishop) ? 0x0202020202020202ULL : 0x4040404040404040ULL;
-    const U64 corner = whiteBishop ? (darkBishop ? BitBoard::sqMask(A8,B8,A7) : BitBoard::sqMask(G8,H8,H7))
-                                   : (lightBishop ? BitBoard::sqMask(A1,B1,A2) : BitBoard::sqMask(G1,H1,H2));
-
-    if ((pos.getPiece(b7) == oPawn) && (pos.getPiece(b6) == pawn) &&
-        (pos.getPiece(a8) != oKnight) && ((pos.pieceTypeBB(king) & corner) == 0)) {
-        if (pos.getPiece(c7) == pawn) {
-            if (BitBoard::bitCount(pos.pieceTypeBB(pawn) & ~bFile) == 1) {
-                int oKingSq = pos.getKingSq(!whiteBishop);
-                if ((oKingSq == c8) || (oKingSq == d7))
-                    return true;
-            }
-        } else {
-            if ((pos.pieceTypeBB(pawn) & ~bFile) == 0) {
-                int oKingSq = pos.getKingSq(!whiteBishop);
-                if ((oKingSq == a8) || (oKingSq == b8) || (oKingSq == c8) ||
-                    (oKingSq == d8) || (oKingSq == d7))
-                    return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-int
-Evaluate::kqkpEval(int wKing, int wQueen, int bKing, int bPawn, bool whiteMove, int score) {
-    bool canWin = false;
-    if (((1ULL << bKing) & 0xFFFF) == 0) {
-        canWin = true; // King doesn't support pawn
-    } else if (std::abs(Position::getX(bPawn) - Position::getX(bKing)) > 2) {
-        canWin = true; // King doesn't support pawn
-    } else {
-        switch (bPawn) {
-        case A2:
-            canWin = ((1ULL << wKing) & 0x0F1F1F1F1FULL) != 0;
-            if (canWin && (bKing == A1) && (Position::getX(wQueen) == 1) && !whiteMove)
-                canWin = false; // Stale-mate
-            break;
-        case C2:
-            canWin = ((1ULL << wKing) & 0x071F1F1FULL) != 0;
-            break;
-        case F2:
-            canWin = ((1ULL << wKing) & 0xE0F8F8F8ULL) != 0;
-            break;
-        case H2:
-            canWin = ((1ULL << wKing) & 0xF0F8F8F8F8ULL) != 0;
-            if (canWin && (bKing == H1) && (Position::getX(wQueen) == 6) && !whiteMove)
-                canWin = false; // Stale-mate
-            break;
-        default:
-            canWin = true;
-            break;
-        }
-    }
-
-    const int dist = BitBoard::getKingDistance(wKing, bPawn);
-    score = score - 20 * (dist - 4);
-    if (!canWin)
-        score /= 50;
-    return score;
-}
-
-int
-Evaluate::kpkEval(int wKing, int bKing, int wPawn, bool whiteMove) {
-    if (Position::getX(wKing) >= 4) { // Mirror X
-        wKing ^= 7;
-        bKing ^= 7;
-        wPawn ^= 7;
-    }
-    int index = whiteMove ? 0 : 1;
-    index = index * 32 + Position::getY(wKing)*4+Position::getX(wKing);
-    index = index * 64 + bKing;
-    index = index * 48 + wPawn - 8;
-
-    int bytePos = index / 8;
-    int bitPos = index % 8;
-    bool draw = (((int)kpkTable[bytePos]) & (1 << bitPos)) == 0;
-    if (draw)
-        return 0;
-    return qV - pV / 4 * (7-Position::getY(wPawn));
-}
-
-bool
-Evaluate::kpkpEval(int wKing, int bKing, int wPawn, int bPawn, int& score) {
-    const U64 wKingMask = 1ULL << wKing;
-    const U64 bKingMask = 1ULL << bKing;
-    if (wPawn == B6 && bPawn == B7) {
-        if ((bKingMask & BitBoard::sqMask(A8,B8,C8,D8,D7)) &&
-            ((wKingMask & BitBoard::sqMask(A8,B8,A7)) == 0)) {
-            score = 0;
-            return true;
-        }
-    } else if (wPawn == G6 && bPawn == G7) {
-        if ((bKingMask & BitBoard::sqMask(E8,F8,G8,H8,E7)) &&
-            ((wKingMask & BitBoard::sqMask(G8,H8,H7)) == 0)) {
-            score = 0;
-            return true;
-        }
-    } else if (wPawn == B2 && bPawn == B3) {
-        if ((wKingMask & BitBoard::sqMask(A1,B1,C1,D1,D2)) &&
-            ((bKingMask & BitBoard::sqMask(A1,B1,A2)) == 0)) {
-            score = 0;
-            return true;
-        }
-    } else if (wPawn == G2 && bPawn == G3) {
-        if ((wKingMask & BitBoard::sqMask(E1,F1,G1,H1,E2)) &&
-            ((bKingMask & BitBoard::sqMask(G1,H1,H2)) == 0)) {
-            score = 0;
-            return true;
-        }
-    }
-    return false;
-}
-
-int
-Evaluate::krkpEval(int wKing, int bKing, int bPawn, bool whiteMove, int score) {
-    if (Position::getX(bKing) >= 4) { // Mirror X
-        wKing ^= 7;
-        bKing ^= 7;
-        bPawn ^= 7;
-    }
-    int index = whiteMove ? 0 : 1;
-    index = index * 32 + Position::getY(bKing)*4+Position::getX(bKing);
-    index = index * 48 + bPawn - 8;
-    index = index * 8 + Position::getY(wKing);
-    byte mask = krkpTable[index];
-    bool canWin = (mask & (1 << Position::getX(wKing))) != 0;
-
-    score = score + Position::getY(bPawn) * pV / 4;
-    if (!canWin)
-        score /= 50;
-    else
-        score += krkpBonus;
-    return score;
-}
-
-int
-Evaluate::krpkrEval(int wKing, int bKing, int wPawn, int wRook, int bRook, bool whiteMove) {
-    if (Position::getX(wPawn) >= 4) { // Mirror X
-        wKing ^= 7;
-        bKing ^= 7;
-        wPawn ^= 7;
-        wRook ^= 7;
-        bRook ^= 7;
-    }
-    int index = whiteMove ? 0 : 1;
-    index = index * 24 + (Position::getY(wPawn)-1)*4+Position::getX(wPawn);
-    index = index * 64 + wKing;
-    const U64 kMask = krpkrTable[index];
-    const bool canWin = (kMask & (1ULL << bKing)) != 0;
-    U64 kingNeighbors = BitBoard::kingAttacks[bKing];
-    const U64 occupied = (1ULL<<wKing) | (1ULL<<bKing) | (1ULL<<wPawn) | (1ULL<<bRook);
-    const U64 rAtk = BitBoard::rookAttacks(wRook, occupied);
-    kingNeighbors &= ~(BitBoard::kingAttacks[wKing] | BitBoard::wPawnAttacks[wPawn] | rAtk);
-    bool close;
-    if (canWin) {
-        close = (kMask & kingNeighbors) != kingNeighbors;
-    } else {
-        close = (kMask & kingNeighbors) != 0;
-    }
-    int score = pV + Position::getY(wPawn) * pV / 4;
-    if (canWin) {
-        if (!close)
-            score += pV;
-    } else {
-        if (close)
-            score /= 2;
-        else
-            score /= 4;
-    }
-    return score;
-}
-
-int
-Evaluate::krpkrpEval(int wKing, int bKing, int wPawn, int wRook, int bRook, int bPawn, bool whiteMove, int score) {
-    int hiScore = krpkrEval(wKing, bKing, wPawn, wRook, bRook, whiteMove);
-    if (score > hiScore * 14 / 16)
-        return hiScore * 14 / 16;
-    int loScore = -krpkrEval(63-bKing, 63-wKing, 63-bPawn, 63-bRook, 63-wRook, !whiteMove);
-    if (score < loScore * 14 / 16)
-        return loScore * 14 / 16;
-    return score;
-}
-
-int
-Evaluate::kbnkEval(int wKing, int bKing, bool darkBishop) {
-    int score = 600;
-    if (darkBishop) { // Mirror X
-        wKing ^= 7;
-        bKing ^= 7;
-    }
-    static const int bkTable[64] = { 17, 15, 12,  9,  7,  4,  2,  0,
-                                     15, 20, 17, 15, 12,  9,  4,  2,
-                                     12, 17, 22, 20, 17, 15,  9,  4,
-                                      9, 15, 20, 25, 22, 17, 12,  7,
-                                      7, 12, 17, 22, 25, 20, 15,  9,
-                                      4,  9, 15, 17, 20, 22, 17, 12,
-                                      2,  4,  9, 12, 15, 17, 20, 15,
-                                      0,  2,  4,  7,  9, 12, 15, 17 };
-
-    score += winKingTable[wKing] - bkTable[bKing];
-    score -= std::min(0, BitBoard::getTaxiDistance(wKing, bKing) - 3);
-    return score;
-}
-
-int
-Evaluate::kbpkbEval(int wKing, int wBish, int wPawn, int bKing, int bBish, int score) {
-    U64 wPawnMask = 1ULL << wPawn;
-    U64 pawnPath = BitBoard::northFill(wPawnMask);
-    U64 bKingMask = 1ULL << bKing;
-    U64 wBishMask = 1ULL << wBish;
-    U64 wBishControl = (wBishMask & BitBoard::maskDarkSq) ? BitBoard::maskDarkSq : BitBoard::maskLightSq;
-    if ((bKingMask & pawnPath) && ((bKingMask & wBishControl) == 0))
-        return 0;
-
-    U64 bBishMask = 1ULL << bBish;
-    if (((wBishMask & BitBoard::maskDarkSq) == 0) != ((bBishMask & BitBoard::maskDarkSq) == 0)) { // Different color bishops
-        if (((bBishMask | BitBoard::bishopAttacks(bBish, bKingMask)) & pawnPath & ~wPawnMask) != 0)
-            if (!(wPawn == A6 && bBish == B8) && !(wPawn == H6 && bBish == G8))
-                return 0;
-    }
-
-    if (bKingMask & BitBoard::wPawnBlockerMask[wPawn])
-        return score / 4;
-    return score;
-}
-
-int
-Evaluate::kbpknEval(int wKing, int wBish, int wPawn, int bKing, int bKnight, int score) {
-    U64 wPawnMask = 1ULL << wPawn;
-    U64 pawnPath = BitBoard::northFill(wPawnMask);
-    U64 bKingMask = 1ULL << bKing;
-    U64 wBishMask = 1ULL << wBish;
-    U64 wBishControl = (wBishMask & BitBoard::maskDarkSq) ? BitBoard::maskDarkSq : BitBoard::maskLightSq;
-
-    U64 edges = 0xff818181818181ffULL;
-    U64 bKnightMask = 1ULL << bKnight;
-    if ((bKnightMask & edges & ~wBishControl) != 0) // Knight on edge square where it can be trapped
-        return score;
-
-    if ((bKingMask & pawnPath) && ((bKingMask & wBishControl) == 0))
-        return 0;
-
-    if (bKingMask & BitBoard::wPawnBlockerMask[wPawn])
-        return score / 4;
-    return score;
-}
-
-int
-Evaluate::knpkbEval(int wKing, int wKnight, int wPawn, int bKing, int bBish, int score, bool wtm) {
-    U64 wPawnMask = 1ULL << wPawn;
-    U64 bBishMask = 1ULL << bBish;
-    U64 bBishControl = (bBishMask & BitBoard::maskDarkSq) ? BitBoard::maskDarkSq : BitBoard::maskLightSq;
-
-    U64 p = wPawnMask;
-    if (bBishControl & wPawnMask) {
-        U64 bKingMask = 1ULL << bKing;
-        U64 wKnightMask = 1ULL << wKnight;
-        if (!wtm && (BitBoard::bishopAttacks(bBish, bKingMask | wKnightMask) & wPawnMask))
-            return 0;
-        p <<= 8;
-    }
-    U64 pawnDrawishMask = 0x183c7e7e7e7eULL;
-    if (p & pawnDrawishMask)
-        return score / 32;
-
-    return score;
-}
-
-int
-Evaluate::knpkEval(int wKing, int wKnight, int wPawn, int bKing, int score, bool wtm) {
-    if (Position::getX(wPawn) >= 4) { // Mirror X
-        wKing ^= 7;
-        wKnight ^= 7;
-        wPawn ^= 7;
-        bKing ^= 7;
-    }
-    if (wPawn == A7) {
-        if (bKing == A8 || bKing == B7) // Fortress
-            return 0;
-        if (wKing == A8 && (bKing == C7 || bKing == C8)) {
-            bool knightDark = Position::darkSquare(Position::getX(wKnight), Position::getY(wKnight));
-            bool kingDark = Position::darkSquare(Position::getX(bKing), Position::getY(bKing));
-            if (wtm == (knightDark == kingDark)) // King trapped
-                return 0;
-        }
-    }
-    return score;
-}
-
 std::shared_ptr<Evaluate::EvalHashTables>
 Evaluate::getEvalHashTables() {
     return std::make_shared<EvalHashTables>();
+}
+
+int
+Evaluate::swindleScore(int evalScore) {
+    int sgn = evalScore >= 0 ? 1 : -1;
+    int score = std::abs(evalScore) + 4;
+    int lg = floorLog2(score);
+    score = (lg - 3) * 4 + (score >> (lg - 2));
+    return sgn * score;
 }

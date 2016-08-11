@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -28,16 +28,13 @@
 
 #include "util/util.hpp"
 #include "piece.hpp"
+#include "position.hpp"
 
 #include <memory>
+#include <functional>
 #include <map>
 #include <string>
 #include <cassert>
-
-
-namespace EvaluateNS {
-    void updateEvalParams();
-}
 
 
 /** Handles all UCI parameters. */
@@ -51,20 +48,35 @@ public:
         STRING
     };
 
+    /** Observer pattern. */
+    class Listener {
+        using Func = std::function<void()>;
+    public:
+        int addListener(Func f, bool callNow = true);
+
+        void removeListener(int id);
+
+    protected:
+        void notify();
+
+    private:
+        int nextId = 0;
+        std::map<int, Func> listeners;
+    };
+
     /** Base class for UCI parameters. */
-    struct ParamBase {
+    struct ParamBase : public Listener {
         std::string name;
         Type type;
 
         ParamBase(const std::string& n, Type t) : name(n), type(t) { }
+        ParamBase(const ParamBase& other) = delete;
+        ParamBase& operator=(const ParamBase& other) = delete;
 
         virtual bool getBoolPar() const { assert(false); return false; }
         virtual int getIntPar() const { assert(false); return 0; }
         virtual std::string getStringPar() const { assert(false); return ""; }
         virtual void set(const std::string& value) { assert(false); }
-    private:
-        ParamBase(const ParamBase& other) = delete;
-        ParamBase& operator=(const ParamBase& other) = delete;
     };
 
     /** A boolean parameter. */
@@ -78,66 +90,45 @@ public:
             this->defaultValue = def;
         }
 
-        virtual bool getBoolPar() const { return value; }
+        bool getBoolPar() const override { return value; }
 
-        virtual void set(const std::string& value) {
+        void set(const std::string& value) override {
             if (toLowerCase(value) == "true")
                 this->value = true;
             else if (toLowerCase(value) == "false")
                 this->value = false;
+            notify();
         }
-    };
-
-    class IntRef {
-    public:
-        IntRef(int& value) : valueP(&value) {}
-        void set(int v) { *valueP = v; }
-        int get() const { return *valueP; }
-    private:
-        int* valueP;
-    };
-
-    struct SpinParamBase : public ParamBase {
-        SpinParamBase(const std::string& name) : ParamBase(name, SPIN) {}
-        virtual int getDefaultValue() const = 0;
-        virtual int getMinValue() const = 0;
-        virtual int getMaxValue() const = 0;
     };
 
     /** An integer parameter. */
-    template <typename Ref>
-    struct SpinParamRef : public SpinParamBase {
+    struct SpinParam : public ParamBase {
         int minValue;
         int maxValue;
-        Ref value;
+        int value;
         int defaultValue;
 
-        SpinParamRef(const std::string& name, int minV, int maxV, int def, Ref valueR)
-            : SpinParamBase(name), value(valueR) {
-            this->minValue = minV;
-            this->maxValue = maxV;
-            this->value.set(def);
-            this->defaultValue = def;
+        SpinParam(const std::string& name, int minV, int maxV, int def)
+            : ParamBase(name, SPIN) {
+            minValue = minV;
+            maxValue = maxV;
+            value = def;
+            defaultValue = def;
         }
 
-        virtual int getIntPar() const { return value.get(); }
+        int getIntPar() const override { return value; }
 
-        virtual void set(const std::string& value) {
+        void set(const std::string& value) override {
             int val;
-            if (str2Num(value, val) && (val >= minValue) && (val <= maxValue))
-                this->value.set(val);
+            if (str2Num(value, val) && (val >= minValue) && (val <= maxValue)) {
+                this->value = val;
+                notify();
+            }
         }
 
         int getDefaultValue() const { return defaultValue; }
         int getMinValue() const { return minValue; }
         int getMaxValue() const { return maxValue; }
-    };
-
-    struct SpinParam : public SpinParamRef<IntRef> {
-        int value;
-        SpinParam(const std::string& name, int minV, int maxV, int def)
-            : SpinParamRef(name, minV, maxV, def, IntRef(value)) {
-        }
     };
 
     /** A multi-choice parameter. */
@@ -154,13 +145,14 @@ public:
             this->defaultValue = def;
         }
 
-        virtual std::string getStringPar() const { return value; }
+        std::string getStringPar() const override { return value; }
 
-        virtual void set(const std::string& value) {
+        void set(const std::string& value) override {
             for (size_t i = 0; i < allowedValues.size(); i++) {
                 const std::string& allowed = allowedValues[i];
                 if (toLowerCase(allowed) == toLowerCase(value)) {
                     this->value = allowed;
+                    notify();
                     break;
                 }
             }
@@ -172,7 +164,8 @@ public:
         ButtonParam(const std::string& name)
             : ParamBase(name, BUTTON) { }
 
-        virtual void set(const std::string& value) {
+        void set(const std::string& value) override {
+            notify();
         }
     };
 
@@ -187,137 +180,89 @@ public:
             this->defaultValue = def;
         }
 
-        virtual std::string getStringPar() const { return value; }
+        std::string getStringPar() const override { return value; }
 
-        virtual void set(const std::string& value) {
+        void set(const std::string& value) override {
             this->value = value;
+            notify();
         }
     };
 
     /** Get singleton instance. */
     static Parameters& instance();
 
-    void getParamNames(std::vector<std::string>& parNames) {
-        parNames.clear();
-        for (const auto& p : params)
-            parNames.push_back(p.first);
-    }
+    /** Retrieve list of all parameters. */
+    void getParamNames(std::vector<std::string>& parNames);
 
-    std::shared_ptr<ParamBase> getParam(const std::string& name) const {
-        auto it = params.find(toLowerCase(name));
-        if (it == params.end())
-            return nullptr;
-        return it->second;
-    }
+    std::shared_ptr<ParamBase> getParam(const std::string& name) const;
 
-    bool getBoolPar(const std::string& name) const {
-        return params.find(toLowerCase(name))->second->getBoolPar();
-    }
+    bool getBoolPar(const std::string& name) const;
+    int getIntPar(const std::string& name) const;
+    std::string getStringPar(const std::string& name) const;
 
-    int getIntPar(const std::string& name) const {
-        return params.find(toLowerCase(name))->second->getIntPar();
-    }
-    std::string getStringPar(const std::string& name) const {
-        return params.find(toLowerCase(name))->second->getStringPar();
-    }
+    void set(const std::string& name, const std::string& value);
 
-    void set(const std::string& name, const std::string& value) {
-        auto it = params.find(toLowerCase(name));
-        if (it == params.end())
-            return;
-        it->second->set(value);
-    }
-
-    void addPar(const std::shared_ptr<ParamBase>& p) {
-        assert(params.find(toLowerCase(p->name)) == params.end());
-        params[toLowerCase(p->name)] = p;
-    }
+    /** Register a parameter. */
+    void addPar(const std::shared_ptr<ParamBase>& p);
 
 private:
     Parameters();
 
-    std::map<std::string, std::shared_ptr<ParamBase> > params;
+    std::map<std::string, std::shared_ptr<ParamBase>> params;
+    std::vector<std::string> paramNames;
 };
 
 // ----------------------------------------------------------------------------
 
-class IntPairRef {
-public:
-    IntPairRef(int& value1, int& value2) : value1P(&value1), value2P(&value2) {}
-    void set(int v) { *value1P = v; *value2P = v; }
-    int get() const { return *value1P; }
-private:
-    int* value1P;
-    int* value2P;
-};
-
 /** Param can be either a UCI parameter or a compile time constant. */
-template <int defaultValue, int minValue, int maxValue, bool uci, typename Ref> class Param;
+template <int defaultValue, int minValue, int maxValue, bool uci> class Param;
 
-template <int defaultValue, int minValue, int maxValue, typename Ref>
-class Param<defaultValue, minValue, maxValue, false, Ref> {
+template <int defaultValue, int minValue, int maxValue>
+class Param<defaultValue, minValue, maxValue, false> {
 public:
-    Param() : ref(value) {}
-    Param(int& r1, int& r2) : ref(r1, r2) { ref.set(defaultValue); }
-
+    Param() {}
     operator int() const { return defaultValue; }
-    void setValue(int v) { assert(false); }
     void registerParam(const std::string& name, Parameters& pars) {}
-private:
-    int value = defaultValue;
-    Ref ref;
+    template <typename Func> void addListener(Func f) { f(); }
 };
 
-template <int defaultValue, int minValue, int maxValue, typename Ref>
-class Param<defaultValue, minValue, maxValue, true, Ref> {
+template <int defaultValue, int minValue, int maxValue>
+class Param<defaultValue, minValue, maxValue, true> {
 public:
-    Param() : ref(value) {}
-    Param(int& r1, int& r2) : ref(r1, r2) { ref.set(defaultValue); }
-
-    operator int() const { return  ref.get(); }
-    void setValue(int v) { value = v; }
+    Param() : value(0) {}
+    operator int() const { return value; }
     void registerParam(const std::string& name, Parameters& pars) {
-        pars.addPar(std::make_shared<Parameters::SpinParamRef<Ref>>(name, minValue, maxValue,
-                                                                    defaultValue, ref));
+        par = std::make_shared<Parameters::SpinParam>(name, minValue, maxValue, defaultValue);
+        pars.addPar(par);
+        par->addListener([this](){ value = par->getIntPar(); });
+    }
+    template <typename Func> void addListener(Func f) {
+        if (par)
+            par->addListener(f, false);
+        f();
     }
 private:
-    int value = defaultValue;
-    Ref ref;
+    int value;
+    std::shared_ptr<Parameters::SpinParam> par;
 };
 
 #define DECLARE_PARAM(name, defV, minV, maxV, uci) \
-    typedef Param<defV,minV,maxV,uci,Parameters::IntRef> name##ParamType; \
-    extern name##ParamType name;
-
-#define DECLARE_PARAM_2REF(name, defV, minV, maxV, uci) \
-    typedef Param<defV,minV,maxV,uci,IntPairRef> name##ParamType; \
+    using name##ParamType = Param<defV,minV,maxV,uci>; \
     extern name##ParamType name;
 
 #define DEFINE_PARAM(name) \
     name##ParamType name;
-
-#define DEFINE_PARAM_2REF(name, ref1, ref2) \
-    name##ParamType name(ref1, ref2);
-
 
 #define REGISTER_PARAM(varName, uciName) \
     varName.registerParam(uciName, *this);
 
 // ----------------------------------------------------------------------------
 
-class ParamModifiedListener {
-public:
-    virtual void modified() = 0;
-};
-
-class TableSpinParam;
-
-class ParamTableBase : public ParamModifiedListener {
+/** Non-template base class to reduce executable code size. */
+class ParamTableBase : public Parameters::Listener {
 public:
     int getMinValue() const { return minValue; }
     int getMaxValue() const { return maxValue; }
-
-    void addDependent(ParamModifiedListener* dep) { dependent.push_back(dep); }
 
 protected:
     ParamTableBase(bool uci0, int minVal0, int maxVal0) :
@@ -330,25 +275,7 @@ protected:
     const int minValue;
     const int maxValue;
 
-    std::vector<std::shared_ptr<TableSpinParam>> params;
-    std::vector<ParamModifiedListener*> dependent;
-};
-
-class TableSpinParam : public Parameters::SpinParamBase {
-public:
-    TableSpinParam(const std::string& name, ParamTableBase& owner, int defaultValue);
-
-    int getDefaultValue() const { return defaultValue; }
-    int getMinValue() const { return owner.getMinValue(); }
-    int getMaxValue() const { return owner.getMaxValue(); }
-    int getIntPar() const { return value; }
-
-    void set(const std::string& value);
-
-private:
-    ParamTableBase& owner;
-    const int defaultValue;
-    int value;
+    std::vector<std::shared_ptr<Parameters::SpinParam>> params;
 };
 
 template <int N>
@@ -364,56 +291,31 @@ public:
     void registerParams(const std::string& name, Parameters& pars) {
         registerParamsN(name, pars, table, parNo, N);
     }
-
-    void modified() { modifiedN(table, parNo, N); }
-
 private:
     int table[N];
     int parNo[N];
 };
 
 template <int N>
-class ParamTableMirrored : public ParamModifiedListener {
+class ParamTableMirrored {
 public:
     ParamTableMirrored(ParamTable<N>& orig0) : orig(orig0) {
-        orig.addDependent(this);
-        modified();
+        orig.addListener([this]() {
+            if (N == 64) {
+                for (int sq = 0; sq < N; sq++)
+                    table[sq] = orig[Position::mirrorY(sq)];
+            } else {
+                for (int i = 0; i < N; i++)
+                    table[i] = orig[N-1-i];
+            }
+        });
     }
     int operator[](int i) const { return table[i]; }
     const int* getTable() const { return table; }
-    void modified() {
-        for (int i = 0; i < N; i++)
-            table[i] = orig[N-1-i];
-    }
 private:
     int table[N];
     ParamTable<N>& orig;
 };
-
-template <int N>
-class ParamTableEv : public ParamTable<N> {
-public:
-    ParamTableEv(int minVal, int maxVal, bool uci,
-                 std::initializer_list<int> data,
-                 std::initializer_list<int> parNo);
-
-    void modified();
-};
-
-
-inline
-TableSpinParam::TableSpinParam(const std::string& name, ParamTableBase& owner0, int defaultValue0)
-    : SpinParamBase(name), owner(owner0), defaultValue(defaultValue0), value(defaultValue0) {
-}
-
-inline void
-TableSpinParam::set(const std::string& value) {
-    int val;
-    if (str2Num(value, val) && (val >= getMinValue()) && (val <= getMaxValue())) {
-        this->value = val;
-        owner.modified();
-    }
-}
 
 template <int N>
 ParamTable<N>::ParamTable(int minVal0, int maxVal0, bool uci0,
@@ -428,112 +330,143 @@ ParamTable<N>::ParamTable(int minVal0, int maxVal0, bool uci0,
     }
 }
 
-template <int N>
-ParamTableEv<N>::ParamTableEv(int minVal0, int maxVal0, bool uci0,
-                              std::initializer_list<int> table0,
-                              std::initializer_list<int> parNo0)
-    : ParamTable<N>(minVal0, maxVal0, uci0, table0, parNo0) {
+inline bool
+Parameters::getBoolPar(const std::string& name) const {
+    return getParam(name)->getBoolPar();
 }
 
-template <int N>
-void ParamTableEv<N>::modified() {
-    ParamTable<N>::modified();
-    EvaluateNS::updateEvalParams();
+inline int
+Parameters::getIntPar(const std::string& name) const {
+    return getParam(name)->getIntPar();
+}
+
+inline std::string
+Parameters::getStringPar(const std::string& name) const {
+    return getParam(name)->getStringPar();
+}
+
+inline void
+Parameters::set(const std::string& name, const std::string& value) {
+    auto it = params.find(toLowerCase(name));
+    if (it == params.end())
+        return;
+    it->second->set(value);
 }
 
 // ----------------------------------------------------------------------------
+// UCI parameters
+
+namespace UciParams {
+    extern std::shared_ptr<Parameters::SpinParam> hash;
+    extern std::shared_ptr<Parameters::CheckParam> ownBook;
+    extern std::shared_ptr<Parameters::CheckParam> ponder;
+    extern std::shared_ptr<Parameters::CheckParam> analyseMode;
+    extern std::shared_ptr<Parameters::SpinParam> strength;
+    extern std::shared_ptr<Parameters::SpinParam> threads;
+    extern std::shared_ptr<Parameters::SpinParam> multiPV;
+
+    extern std::shared_ptr<Parameters::StringParam> gtbPath;
+    extern std::shared_ptr<Parameters::SpinParam> gtbCache;
+    extern std::shared_ptr<Parameters::StringParam> rtbPath;
+    extern std::shared_ptr<Parameters::SpinParam> minProbeDepth;
+
+    extern std::shared_ptr<Parameters::ButtonParam> clearHash;
+}
+
+// ----------------------------------------------------------------------------
+// Tuning parameters
 
 const bool useUciParam = false;
 
 extern int pieceValue[Piece::nPieceTypes];
 
-
 // Evaluation parameters
 
-DECLARE_PARAM_2REF(pV, 100, 1, 200, useUciParam);
-DECLARE_PARAM_2REF(nV, 385, 1, 800, useUciParam);
-DECLARE_PARAM_2REF(bV, 385, 1, 800, useUciParam);
-DECLARE_PARAM_2REF(rV, 600, 1, 1200, useUciParam);
-DECLARE_PARAM_2REF(qV, 1215, 1, 2400, useUciParam);
-DECLARE_PARAM_2REF(kV, 9900, 9900, 9900, false); // Used by SEE algorithm but not included in board material sums
+DECLARE_PARAM(pV, 100, 1, 200, useUciParam);
+DECLARE_PARAM(nV, 385, 1, 800, useUciParam);
+DECLARE_PARAM(bV, 385, 1, 800, useUciParam);
+DECLARE_PARAM(rV, 597, 1, 1200, useUciParam);
+DECLARE_PARAM(qV, 1215, 1, 2400, useUciParam);
+DECLARE_PARAM(kV, 9900, 9900, 9900, false); // Used by SEE algorithm but not included in board material sums
 
 DECLARE_PARAM(pawnIslandPenalty,        8, 0, 50, useUciParam);
-DECLARE_PARAM(pawnBackwardPenalty,      16, 0, 50, useUciParam);
+DECLARE_PARAM(pawnBackwardPenalty,      15, 0, 50, useUciParam);
 DECLARE_PARAM(pawnSemiBackwardPenalty1, 6, -50, 50, useUciParam);
 DECLARE_PARAM(pawnSemiBackwardPenalty2, 2, -50, 50, useUciParam);
-DECLARE_PARAM(pawnGuardedPassedBonus,   4, 0, 50, useUciParam);
-DECLARE_PARAM(pawnRaceBonus,            169, 0, 1000, useUciParam);
-DECLARE_PARAM(passedPawnEGFactor,       62, 1, 128, useUciParam);
-DECLARE_PARAM(RBehindPP1,               9, -100, 100, useUciParam);
-DECLARE_PARAM(RBehindPP2,               19, -100, 100, useUciParam);
+DECLARE_PARAM(pawnRaceBonus,            181, 0, 1000, useUciParam);
+DECLARE_PARAM(passedPawnEGFactor,       63, 1, 128, useUciParam);
+DECLARE_PARAM(RBehindPP1,               10, -100, 100, useUciParam);
+DECLARE_PARAM(RBehindPP2,               24, -100, 100, useUciParam);
 
-DECLARE_PARAM(QvsRMBonus1,         43, -100, 100, useUciParam);
-DECLARE_PARAM(QvsRMBonus2,         16, -100, 100, useUciParam);
+DECLARE_PARAM(QvsRMBonus1,         30, -100, 100, useUciParam);
+DECLARE_PARAM(QvsRMBonus2,         -8, -100, 100, useUciParam);
 DECLARE_PARAM(knightVsQueenBonus1, 125, 0, 200, useUciParam);
 DECLARE_PARAM(knightVsQueenBonus2, 251, 0, 600, useUciParam);
 DECLARE_PARAM(knightVsQueenBonus3, 357, 0, 800, useUciParam);
-DECLARE_PARAM(krkpBonus,           400, 0, 400, useUciParam);
-DECLARE_PARAM(krpkbBonus,          114, -200, 200, useUciParam);
-DECLARE_PARAM(krpkbPenalty,        52,  0, 128, useUciParam);
-DECLARE_PARAM(krpknBonus,          175, 0, 400, useUciParam);
-DECLARE_PARAM(RvsBPBonus,          -19, -200, 200, useUciParam);
+DECLARE_PARAM(krkpBonus,           135, 0, 400, useUciParam);
+DECLARE_PARAM(krpkbBonus,          140, -200, 200, useUciParam);
+DECLARE_PARAM(krpkbPenalty,        70,  0, 128, useUciParam);
+DECLARE_PARAM(krpknBonus,          259, 0, 400, useUciParam);
+DECLARE_PARAM(RvsBPBonus,          -38, -200, 200, useUciParam);
 
-DECLARE_PARAM(pawnTradePenalty,    58, 0, 100, useUciParam);
+DECLARE_PARAM(pawnTradePenalty,    54, 0, 100, useUciParam);
 DECLARE_PARAM(pieceTradeBonus,     10, 0, 100, useUciParam);
-DECLARE_PARAM(pawnTradeThreshold,  364, 100, 1000, useUciParam);
-DECLARE_PARAM(pieceTradeThreshold, 732, 10, 1000, useUciParam);
+DECLARE_PARAM(pawnTradeThreshold,  361, 100, 1000, useUciParam);
+DECLARE_PARAM(pieceTradeThreshold, 717, 10, 1000, useUciParam);
 
 DECLARE_PARAM(threatBonus1,     63, 5, 500, useUciParam);
 DECLARE_PARAM(threatBonus2,     1191, 100, 10000, useUciParam);
 
-DECLARE_PARAM(rookHalfOpenBonus,     16, 0, 100, useUciParam);
+DECLARE_PARAM(rookHalfOpenBonus,     14, 0, 100, useUciParam);
 DECLARE_PARAM(rookOpenBonus,         21, 0, 100, useUciParam);
-DECLARE_PARAM(rookDouble7thRowBonus, 77, 0, 100, useUciParam);
-DECLARE_PARAM(trappedRookPenalty,    73, 0, 200, useUciParam);
+DECLARE_PARAM(rookDouble7thRowBonus, 78, 0, 100, useUciParam);
+DECLARE_PARAM(trappedRookPenalty1,   59, 0, 200, useUciParam);
+DECLARE_PARAM(trappedRookPenalty2,   31, 0, 200, useUciParam);
 
 DECLARE_PARAM(bishopPairPawnPenalty, 5, 0, 10, useUciParam);
-DECLARE_PARAM(trappedBishopPenalty,  83, 0, 300, useUciParam);
-DECLARE_PARAM(oppoBishopPenalty,     72, 0, 128, useUciParam);
+DECLARE_PARAM(trappedBishopPenalty,  128, 0, 300, useUciParam);
+DECLARE_PARAM(oppoBishopPenalty,     80, 0, 128, useUciParam);
 
-DECLARE_PARAM(kingSafetyHalfOpenBCDEFG1, 19, 0, 100, useUciParam);
-DECLARE_PARAM(kingSafetyHalfOpenBCDEFG2, -11, -50, 100, useUciParam);
-DECLARE_PARAM(kingSafetyHalfOpenAH1,     18, 0, 100, useUciParam);
-DECLARE_PARAM(kingSafetyHalfOpenAH2,     11, 0, 100, useUciParam);
-DECLARE_PARAM(kingSafetyWeight1,         33, -50, 200, useUciParam);
-DECLARE_PARAM(kingSafetyWeight2,         -41, -50, 200, useUciParam);
-DECLARE_PARAM(kingSafetyWeight3,         8, -50, 200, useUciParam);
-DECLARE_PARAM(kingSafetyWeight4,         2, -50, 200, useUciParam);
-DECLARE_PARAM(kingSafetyThreshold,       45, 0, 200, useUciParam);
-DECLARE_PARAM(knightKingProtectBonus,    16, -50, 50, useUciParam);
-DECLARE_PARAM(bishopKingProtectBonus,    19, -50, 50, useUciParam);
+DECLARE_PARAM(kingSafetyHalfOpenBCDEFG1, 18, 0, 100, useUciParam);
+DECLARE_PARAM(kingSafetyHalfOpenBCDEFG2, -2, -50, 100, useUciParam);
+DECLARE_PARAM(kingSafetyHalfOpenAH1,     21, 0, 100, useUciParam);
+DECLARE_PARAM(kingSafetyHalfOpenAH2,     14, 0, 100, useUciParam);
+DECLARE_PARAM(kingSafetyWeight1,         26, -50, 200, useUciParam);
+DECLARE_PARAM(kingSafetyWeight2,         -50, -50, 200, useUciParam);
+DECLARE_PARAM(kingSafetyWeight3,         7, -50, 200, useUciParam);
+DECLARE_PARAM(kingSafetyWeight4,         1, -50, 200, useUciParam);
+DECLARE_PARAM(kingSafetyThreshold,       46, 0, 200, useUciParam);
+DECLARE_PARAM(knightKingProtectBonus,    12, -50, 50, useUciParam);
+DECLARE_PARAM(bishopKingProtectBonus,    15, -50, 50, useUciParam);
 DECLARE_PARAM(pawnStormBonus,            12, 0, 20, useUciParam);
 
-DECLARE_PARAM(pawnLoMtrl,          500, 0, 10000, useUciParam);
-DECLARE_PARAM(pawnHiMtrl,          3204, 0, 10000, useUciParam);
-DECLARE_PARAM(minorLoMtrl,         1116, 0, 10000, useUciParam);
-DECLARE_PARAM(minorHiMtrl,         3742, 0, 10000, useUciParam);
+DECLARE_PARAM(pawnLoMtrl,          503, 0, 10000, useUciParam);
+DECLARE_PARAM(pawnHiMtrl,          3205, 0, 10000, useUciParam);
+DECLARE_PARAM(minorLoMtrl,         1114, 0, 10000, useUciParam);
+DECLARE_PARAM(minorHiMtrl,         3743, 0, 10000, useUciParam);
 DECLARE_PARAM(castleLoMtrl,        712, 0, 10000, useUciParam);
 DECLARE_PARAM(castleHiMtrl,        7884, 0, 10000, useUciParam);
-DECLARE_PARAM(queenLoMtrl,         4501, 0, 10000, useUciParam);
-DECLARE_PARAM(queenHiMtrl,         6532, 0, 10000, useUciParam);
-DECLARE_PARAM(passedPawnLoMtrl,    766, 0, 10000, useUciParam);
-DECLARE_PARAM(passedPawnHiMtrl,    2512, 0, 10000, useUciParam);
-DECLARE_PARAM(kingSafetyLoMtrl,    945, 0, 10000, useUciParam);
-DECLARE_PARAM(kingSafetyHiMtrl,    3571, 0, 10000, useUciParam);
+DECLARE_PARAM(queenLoMtrl,         4504, 0, 10000, useUciParam);
+DECLARE_PARAM(queenHiMtrl,         6544, 0, 10000, useUciParam);
+DECLARE_PARAM(passedPawnLoMtrl,    768, 0, 10000, useUciParam);
+DECLARE_PARAM(passedPawnHiMtrl,    2511, 0, 10000, useUciParam);
+DECLARE_PARAM(kingSafetyLoMtrl,    919, 0, 10000, useUciParam);
+DECLARE_PARAM(kingSafetyHiMtrl,    3567, 0, 10000, useUciParam);
 DECLARE_PARAM(oppoBishopLoMtrl,    752, 0, 10000, useUciParam);
 DECLARE_PARAM(oppoBishopHiMtrl,    3386, 0, 10000, useUciParam);
-DECLARE_PARAM(knightOutpostLoMtrl, 162, 0, 10000, useUciParam);
-DECLARE_PARAM(knightOutpostHiMtrl, 538, 0, 10000, useUciParam);
+DECLARE_PARAM(knightOutpostLoMtrl, 157, 0, 10000, useUciParam);
+DECLARE_PARAM(knightOutpostHiMtrl, 539, 0, 10000, useUciParam);
 
 extern ParamTable<64>         kt1b, kt2b, pt1b, pt2b, nt1b, nt2b, bt1b, bt2b, qt1b, qt2b, rt1b;
 extern ParamTableMirrored<64> kt1w, kt2w, pt1w, pt2w, nt1w, nt2w, bt1w, bt2w, qt1w, qt2w, rt1w;
 
 extern ParamTable<64> knightOutpostBonus;
 extern ParamTable<64> protectedPawnBonus, attackedPawnBonus;
+extern ParamTable<4> protectBonus;
 
 extern ParamTable<15> rookMobScore;
 extern ParamTable<14> bishMobScore;
-extern ParamTableEv<28> knightMobScore;
+extern ParamTable<28> knightMobScore;
 extern ParamTable<28> queenMobScore;
 
 extern ParamTable<36> connectedPPBonus;
@@ -547,15 +480,16 @@ extern ParamTable<7> RvsMBonus, RvsMMBonus;
 extern ParamTable<4> bishopPairValue;
 extern ParamTable<7> rookEGDrawFactor, RvsBPDrawFactor;
 
-extern ParamTableEv<4> castleFactor;
+extern ParamTable<4> castleFactor;
 extern ParamTable<9> pawnShelterTable, pawnStormTable;
-extern ParamTable<10> kingAttackWeight;
+extern ParamTable<14> kingAttackWeight;
 extern ParamTable<5> kingPPSupportK;
 extern ParamTable<8> kingPPSupportP;
 
 extern ParamTable<8> pawnDoubledPenalty;
 extern ParamTable<8> pawnIsolatedPenalty;
 extern ParamTable<10> halfMoveFactor;
+extern ParamTable<9> stalePawnFactor;
 
 
 // Search parameters
@@ -590,7 +524,7 @@ DECLARE_PARAM(deltaPruningMargin, 152, 0, 1000, useUciParam);
 
 // Time management parameters
 
-DECLARE_PARAM(timeMaxRemainingMoves, 45, 2, 200, useUciParam);
+DECLARE_PARAM(timeMaxRemainingMoves, 35, 2, 200, useUciParam);
 DECLARE_PARAM(bufferTime, 1000, 1, 10000, useUciParam);
 DECLARE_PARAM(minTimeUsage, 85, 1, 100, useUciParam);
 DECLARE_PARAM(maxTimeUsage, 400, 100, 1000, useUciParam);
