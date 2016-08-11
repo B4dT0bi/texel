@@ -35,7 +35,7 @@ static StaticInitializer<ComputerPlayer> cpInit;
 
 void
 ComputerPlayer::staticInitialize() {
-    std::string name = "Texel 1.03";
+    std::string name = "Texel 1.04";
     if (sizeof(char*) == 4)
         name += " 32-bit";
     if (sizeof(char*) == 8)
@@ -45,9 +45,10 @@ ComputerPlayer::staticInitialize() {
 
 ComputerPlayer::ComputerPlayer()
     : tt(15), pd(tt),
-      book(verbose)
+      book(false)
 {
     Parameters::instance();
+    Evaluate::updateEvalParams();
     et = Evaluate::getEvalHashTables();
     minTimeMillis = 10000;
     maxTimeMillis = 10000;

@@ -52,7 +52,7 @@ private:
         int score;
         short wPawnIPF, bPawnIPF;
         short wKnightIPF, bKnightIPF;
-        short castleIPF;
+        short castleIPF, queenIPF;
         short wPassedPawnIPF, bPassedPawnIPF;
         short kingSafetyIPF;
         short diffColorBishopIPF;
@@ -110,6 +110,7 @@ public:
     static int interpolate(int v1, int v2, int k);
 
     static void staticInitialize();
+    static void updateEvalParams();
 
 private:
     template <bool print> int evalPos(const Position& pos);
@@ -156,9 +157,14 @@ private:
      * is returned otherwise. */
     template <bool doEval> int endGameEval(const Position& pos, int oldScore) const;
 
+    /** Return true if the side with the bishop can not win because the opponent
+     * has a fortress draw. */
+    template <bool whiteBishop> bool isBishopPawnDraw(const Position& pos) const;
+
     static int kqkpEval(int wKing, int wQueen, int bKing, int bPawn, bool whiteMove, int score);
 
     static int kpkEval(int wKing, int bKing, int wPawn, bool whiteMove);
+    static bool kpkpEval(int wKing, int bKing, int wPawn, int bPawn, int& score);
 
     static int krkpEval(int wKing, int bKing, int bPawn, bool whiteMove, int score);
     static int krpkrEval(int wKing, int bKing, int wPawn, int wRook, int bRook, bool whiteMove);
@@ -171,9 +177,11 @@ private:
     static int knpkbEval(int wKing, int wKnight, int wPawn, int bKing, int bBish, int score, bool wtm);
     static int knpkEval(int wKing, int wKnight, int wPawn, int bKing, int score, bool wtm);
 
-    static int castleFactor[256];
+    static int castleMaskFactor[256];
     static const int distToH1A8[8][8];
-    static int knightMobScore[64][9];
+    static int knightMobScoreA[64][9];
+    static U64 knightKingProtectPattern[64];
+    static U64 bishopKingProtectPattern[64];
 
     std::vector<PawnHashData>& pawnHash;
     const PawnHashData* phd;

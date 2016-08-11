@@ -6,7 +6,7 @@ SRC	= bitBoard.cpp book.cpp computerPlayer.cpp enginecontrol.cpp evaluate.cpp \
 	  util/logger.cpp util/random.cpp util/timeUtil.cpp util/util.cpp
 
 CXX		= g++
-CXXFLAGS	= -O3 -Wall -std=c++11 -pthread -march=corei7 -DHAVE_CTZ -DHAVE_POPCNT -DHAVE_PREFETCH
+CXXFLAGS	= -O3 -Wall -std=c++11 -pthread -march=corei7 -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH
 LDFLAGS		= -pthread -lrt
 STRIP		= strip
 OBJS_32		= $(patsubst %.cpp,obj32/%.o,$(SRC))
@@ -14,13 +14,13 @@ OBJS_64		= $(patsubst %.cpp,obj64/%.o,$(SRC))
 
 
 CXX_WIN 	= /home/petero/mingw64/bin/x86_64-w64-mingw32-g++
-CXXFLAGS_WIN	= -O3 -Wall -std=c++11 -pthread -march=corei7 -DHAVE_CTZ -DHAVE_POPCNT -DHAVE_PREFETCH
+CXXFLAGS_WIN	= -O3 -Wall -std=c++11 -pthread -march=corei7 -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH
 LDFLAGS_WIN	= -pthread
 STRIP_WIN	= /home/petero/mingw64/bin/x86_64-w64-mingw32-strip
 OBJS_W64 	= $(patsubst %.cpp,objw64/%.o,$(SRC))
 
 CXX_WINAMD 	= /home/petero/mingw64/bin/x86_64-w64-mingw32-g++
-CXXFLAGS_WINAMD	= -O3 -Wall -std=c++11 -pthread -march=athlon64-sse3 -mpopcnt -DHAVE_CTZ -DHAVE_POPCNT -DHAVE_PREFETCH
+CXXFLAGS_WINAMD	= -O3 -Wall -std=c++11 -pthread -march=athlon64-sse3 -mpopcnt -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH
 LDFLAGS_WINAMD	= -pthread
 STRIP_WINAMD	= /home/petero/mingw64/bin/x86_64-w64-mingw32-strip
 OBJS_W32AMD 	= $(patsubst %.cpp,objw32amd/%.o,$(SRC))
@@ -34,7 +34,7 @@ OBJS_W32OLD 	= $(patsubst %.cpp,objw32old/%.o,$(SRC))
 OBJS_W64OLD 	= $(patsubst %.cpp,objw64old/%.o,$(SRC))
 
 CXX_WIN32 	= /home/petero/mingw32/bin/i686-w64-mingw32-g++
-CXXFLAGS_WIN32	= -O3 -Wall -std=c++11 -pthread -march=athlon64-sse3 -mpopcnt -DHAVE_CTZ -DHAVE_POPCNT -DHAVE_PREFETCH
+CXXFLAGS_WIN32	= -O3 -Wall -std=c++11 -pthread -march=athlon64-sse3 -mpopcnt -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH
 LDFLAGS_WIN32	= -pthread
 STRIP_WIN32	= /home/petero/mingw32/bin/i686-w64-mingw32-strip
 OBJS_W32 	= $(patsubst %.cpp,objw32/%.o,$(SRC))
@@ -55,7 +55,7 @@ OBJS_DEF	= $(patsubst %.cpp,objdef/%.o,$(SRC))
 
 CXX_ARM 	= /home/petero/androidgcc/bin/arm-linux-androideabi-g++ -D__STDC_INT64__ \
 	          -D_GLIBCXX_USE_C99_STDINT_TR1 -D_GLIBCXX_HAS_GTHREADS -D_GLIBCXX__PTHREADS -D_POSIX_TIMEOUTS
-CXXFLAGS_ARM	= -O3 -Wall -std=c++11 -pthread -mthumb -march=armv7-a -DHAVE_CTZ
+CXXFLAGS_ARM	= -O3 -Wall -std=c++11 -pthread -mthumb -march=armv7-a -DHAS_CTZ
 LDFLAGS_ARM	= -pthread -mthumb -march=armv7-a
 STRIP_ARM 	= /home/petero/androidgcc/bin/arm-linux-androideabi-strip
 OBJS_ARM 	= $(patsubst %.cpp,objarm/%.o,$(SRC))
@@ -84,15 +84,15 @@ dist	: texel.7z
 texel.7z: FORCE $(ALL_EXE) strip
 	(VER=$$(echo -e 'uci\nquit' | ./texel64 | grep 'id name' | awk '{print $$4}' | tr -d .) ; \
 	 rm -f texel$${VER}.7z ; \
-	 7za a texel$${VER}.7z Makefile src/*.?pp src/util/*.?pp $(ALL_EXE))
+	 7za a texel$${VER}.7z Makefile COPYING readme.txt src/*.?pp src/util/*.?pp $(ALL_EXE))
 
 
 $(OBJS_DEF) : objdef/%.o : src/%.cpp
 	@mkdir -p $$(dirname $@)
-	$(CXX_DEF) $(CXXFLAGS_DEF) -m64 -c -o $@ $<
+	$(CXX_DEF) $(CXXFLAGS_DEF) -c -o $@ $<
 
 texel	 : $(OBJS_DEF) Makefile
-	$(CXX_DEF) $(LDFLAGS_DEF) -m64 -o $@ $(OBJS_DEF)
+	$(CXX_DEF) $(LDFLAGS_DEF) -o $@ $(OBJS_DEF)
 
 
 
