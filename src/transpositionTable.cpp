@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2015  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -34,11 +34,31 @@
 using namespace std;
 
 
+TranspositionTable::TranspositionTable(int log2Size)
+    : ttStorage(*this) {
+    reSize(log2Size);
+}
+
 void
 TranspositionTable::reSize(int log2Size) {
     const size_t numEntries = ((size_t)1) << log2Size;
     table.resize(numEntries);
     generation = 0;
+
+    setHashMask(table.size());
+    tbGen.reset();
+    notUsedCnt = 0;
+}
+
+void
+TranspositionTable::clear() {
+    setHashMask(table.size());
+    tbGen.reset();
+    notUsedCnt = 0;
+    TTEntry ent;
+    ent.clear();
+    for (size_t i = 0; i < table.size(); i++)
+        ent.store(table[i]);
 }
 
 void
@@ -46,40 +66,43 @@ TranspositionTable::insert(U64 key, const Move& sm, int type, int ply, int depth
     if (depth < 0) depth = 0;
     size_t idx0 = getIndex(key);
     U64 key2 = getStoredKey(key);
-    TTEntry ent0, ent1;
-    ent0.load(table[idx0]);
+    TTEntry ent, tmp;
+    ent.clear();
     size_t idx = idx0;
-    TTEntry* ent = &ent0;
-    if (ent0.getKey() != key2) {
-        size_t idx1 = idx0 ^ 1;
-        ent1.load(table[idx1]);
-        idx = idx1;
-        ent = &ent1;
-        if (ent1.getKey() != key2)
-            if (ent1.betterThan(ent0, generation)) {
-                idx = idx0;
-                ent = &ent0;
-            }
+    for (int i = 0; i < 4; i++) {
+        size_t idx1 = idx0 + i;
+        tmp.load(table[idx1]);
+        if (tmp.getKey() == key2) {
+            ent = tmp;
+            idx = idx1;
+            break;
+        } else if (i == 0) {
+            ent = tmp;
+            idx = idx1;
+        } else if (ent.betterThan(tmp, generation)) {
+            ent = tmp;
+            idx = idx1;
+        }
     }
     bool doStore = true;
-    if ((ent->getKey() == key2) && (ent->getDepth() > depth) && (ent->getType() == type)) {
+    if ((ent.getKey() == key2) && (ent.getDepth() > depth) && (ent.getType() == type)) {
         if (type == TType::T_EXACT)
             doStore = false;
-        else if ((type == TType::T_GE) && (sm.score() <= ent->getScore(ply)))
+        else if ((type == TType::T_GE) && (sm.score() <= ent.getScore(ply)))
             doStore = false;
-        else if ((type == TType::T_LE) && (sm.score() >= ent->getScore(ply)))
+        else if ((type == TType::T_LE) && (sm.score() >= ent.getScore(ply)))
             doStore = false;
     }
     if (doStore) {
-        if ((ent->getKey() != key2) || (sm.from() != sm.to()))
-            ent->setMove(sm);
-        ent->setKey(key2);
-        ent->setScore(sm.score(), ply);
-        ent->setDepth(depth);
-        ent->setGeneration((S8)generation);
-        ent->setType(type);
-        ent->setEvalScore(evalScore);
-        ent->store(table[idx]);
+        if ((ent.getKey() != key2) || (sm.from() != sm.to()))
+            ent.setMove(sm);
+        ent.setKey(key2);
+        ent.setScore(sm.score(), ply);
+        ent.setDepth(depth);
+        ent.setGeneration((S8)generation);
+        ent.setType(type);
+        ent.setEvalScore(evalScore);
+        ent.store(table[idx]);
     }
 }
 
@@ -162,12 +185,10 @@ TranspositionTable::extractPV(const Position& posIn) {
 }
 
 void
-TranspositionTable::printStats() const {
+TranspositionTable::printStats(int rootDepth) const {
     int unused = 0;
     int thisGen = 0;
     std::vector<int> depHist;
-    const int maxDepth = 20*8;
-    depHist.resize(maxDepth);
     for (size_t i = 0; i < table.size(); i++) {
         TTEntry ent;
         ent.load(table[i]);
@@ -176,18 +197,20 @@ TranspositionTable::printStats() const {
         } else {
             if (ent.getGeneration() == generation)
                 thisGen++;
-            if (ent.getDepth() < maxDepth)
-                depHist[ent.getDepth()]++;
+            int d = ent.getDepth();
+            while ((int)depHist.size() <= d)
+                depHist.push_back(0);
+            depHist[d]++;
         }
     }
     double w = 100.0 / table.size();
     std::stringstream ss;
     ss.precision(2);
-    ss << std::fixed << "hstat: size:" << table.size()
+    ss << std::fixed << "hstat: d:" << rootDepth << " size:" << table.size()
        << " unused:" << unused << " (" << (unused*w) << "%)"
        << " thisGen:" << thisGen << " (" << (thisGen*w) << "%)" << std::endl;
     cout << ss.str();
-    for (int i = 0; i < maxDepth; i++) {
+    for (size_t i = 0; i < depHist.size(); i++) {
         int c = depHist[i];
         if (c > 0) {
             std::stringstream ss;
@@ -198,4 +221,62 @@ TranspositionTable::printStats() const {
             std::cout << "hstat:" << ss.str() << std::endl;
         }
     }
+}
+
+// --------------------------------------------------------------------------------
+
+bool
+TranspositionTable::updateTB(const Position& pos, RelaxedShared<S64>& maxTimeMillis) {
+    if (BitBoard::bitCount(pos.occupiedBB()) > 4 ||
+        pos.pieceTypeBB(Piece::WPAWN, Piece::BPAWN)) { // pos not suitable for TB generation
+        if (tbGen && notUsedCnt++ > 3) {
+            tbGen.reset();
+            setHashMask(table.size());
+            notUsedCnt = 0;
+        }
+        return tbGen != nullptr;
+    }
+
+    int score;
+    if (tbGen && tbGen->probeDTM(pos, 0, score)) {
+        notUsedCnt = 0;
+        return true; // pos already in TB
+    }
+
+    static S64 requiredTime = 3000;
+    if (maxTimeMillis >= 0 && maxTimeMillis < requiredTime)
+        return false; // Not enough time to generate TB
+
+    U64 ttSize = table.size() * 16;
+    if (ttSize < 8 * 1024 * 1024)
+        return false; // Need at least 5MB for TB storage
+
+    PieceCount pc;
+    pc.nwq = BitBoard::bitCount(pos.pieceTypeBB(Piece::WQUEEN));
+    pc.nwr = BitBoard::bitCount(pos.pieceTypeBB(Piece::WROOK));
+    pc.nwb = BitBoard::bitCount(pos.pieceTypeBB(Piece::WBISHOP));
+    pc.nwn = BitBoard::bitCount(pos.pieceTypeBB(Piece::WKNIGHT));
+    pc.nbq = BitBoard::bitCount(pos.pieceTypeBB(Piece::BQUEEN));
+    pc.nbr = BitBoard::bitCount(pos.pieceTypeBB(Piece::BROOK));
+    pc.nbb = BitBoard::bitCount(pos.pieceTypeBB(Piece::BBISHOP));
+    pc.nbn = BitBoard::bitCount(pos.pieceTypeBB(Piece::BKNIGHT));
+
+    tbGen = make_unique<TBGenerator<TTStorage>>(ttStorage, pc);
+    if (!tbGen->generate(maxTimeMillis, false)) {
+        // Increase requiredTime unless computation was aborted
+        S64 maxT = maxTimeMillis;
+        if (maxT != 0)
+            requiredTime = std::max(maxT, requiredTime) * 2;
+        return false;
+    }
+    int shift = (ttSize < 16 * 1024 * 1024) ? 2 : 1;
+    setHashMask(table.size() >> shift);
+    hashMask = (table.size() - 1) >> shift;
+    notUsedCnt = 0;
+    return true;
+}
+
+bool
+TranspositionTable::probeDTM(const Position& pos, int ply, int& score) {
+    return tbGen && tbGen->probeDTM(pos, ply, score);
 }

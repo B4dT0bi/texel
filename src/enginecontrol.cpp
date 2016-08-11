@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2016  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -122,7 +122,7 @@ EngineControl::startSearch(const Position& pos, const std::vector<Move>& moves, 
     ponder = false;
     infinite = (maxTimeLimit < 0) && (maxDepth < 0) && (maxNodes < 0);
     searchMoves = sPar.searchMoves;
-    startThread(minTimeLimit, maxTimeLimit, maxDepth, maxNodes);
+    startThread(minTimeLimit, maxTimeLimit, earlyStopPercentage, maxDepth, maxNodes);
 }
 
 void
@@ -132,7 +132,7 @@ EngineControl::startPonder(const Position& pos, const std::vector<Move>& moves, 
     computeTimeLimit(sPar);
     ponder = true;
     infinite = false;
-    startThread(-1, -1, -1, -1);
+    startThread(-1, -1, -1, -1, -1);
 }
 
 void
@@ -147,7 +147,7 @@ EngineControl::ponderHit() {
             if (minTimeLimit > 1) minTimeLimit = 1;
             if (maxTimeLimit > 1) maxTimeLimit = 1;
         }
-        mySearch->timeLimit(minTimeLimit, maxTimeLimit);
+        mySearch->timeLimit(minTimeLimit, maxTimeLimit, earlyStopPercentage);
     }
     infinite = (maxTimeLimit < 0) && (maxDepth < 0) && (maxNodes < 0);
     ponder = false;
@@ -172,6 +172,7 @@ void
 EngineControl::computeTimeLimit(const SearchParams& sPar) {
     minTimeLimit = -1;
     maxTimeLimit = -1;
+    earlyStopPercentage = -1;
     maxDepth = -1;
     maxNodes = -1;
     if (sPar.infinite) {
@@ -190,6 +191,7 @@ EngineControl::computeTimeLimit(const SearchParams& sPar) {
 
         if (sPar.moveTime > 0) {
              minTimeLimit = maxTimeLimit = sPar.moveTime;
+             earlyStopPercentage = 100; // Don't stop search early if asked to search a fixed amount of time
         } else if (sPar.wTime || sPar.bTime) {
             int moves = sPar.movesToGo;
             if (moves == 0)
@@ -200,12 +202,12 @@ EngineControl::computeTimeLimit(const SearchParams& sPar) {
             int inc  = white ? sPar.wInc : sPar.bInc;
             const int margin = std::min(static_cast<int>(bufferTime), time * 9 / 10);
             int timeLimit = (time + inc * (moves - 1) - margin) / moves;
-            minTimeLimit = (int)(timeLimit * minTimeUsage * 0.01);
+            minTimeLimit = timeLimit;
             if (UciParams::ponder->getBoolPar()) {
                 const double ponderHitRate = timePonderHitRate * 0.01;
                 minTimeLimit = (int)ceil(minTimeLimit / (1 - ponderHitRate));
             }
-            maxTimeLimit = (int)(minTimeLimit * clamp(moves * 0.5, 2.5, static_cast<int>(maxTimeUsage) * 0.01));
+            maxTimeLimit = (int)(minTimeLimit * clamp(moves * 0.5, 2.0, static_cast<int>(maxTimeUsage) * 0.01));
 
             // Leave at least 1s on the clock, but can't use negative time
             minTimeLimit = clamp(minTimeLimit, 1, time - margin);
@@ -215,10 +217,11 @@ EngineControl::computeTimeLimit(const SearchParams& sPar) {
 }
 
 void
-EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int maxDepth, int maxNodes) {
+EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int earlyStopPercentage,
+                           int maxDepth, int maxNodes) {
     Search::SearchTables st(tt, kt, ht, *et);
     sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, pd, nullptr, treeLog);
-    sc->setListener(std::make_shared<SearchListener>(os));
+    sc->setListener(make_unique<SearchListener>(os));
     sc->setStrength(UciParams::strength->getIntPar(), randomSeed);
     std::shared_ptr<MoveList> moves(std::make_shared<MoveList>());
     MoveGen::pseudoLegalMoves(pos, *moves);
@@ -241,8 +244,7 @@ EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int maxDepth, int
     pd.addRemoveWorkers(UciParams::threads->getIntPar() - 1);
     pd.wq.resetSplitDepth();
     pd.startAll();
-    sc->timeLimit(minTimeLimit, maxTimeLimit);
-    tt.nextGeneration();
+    sc->timeLimit(minTimeLimit, maxTimeLimit, earlyStopPercentage);
     bool ownBook = UciParams::ownBook->getBoolPar();
     bool analyseMode = UciParams::analyseMode->getBoolPar();
     int maxPV = (infinite || analyseMode) ? UciParams::multiPV->getIntPar() : 1;
@@ -254,6 +256,8 @@ EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int maxDepth, int
         ss.precision(2);
         ss << std::fixed << (evScore / 100.0);
         os << "info string Eval: " << ss.str() << std::endl;
+    } else {
+        tt.nextGeneration();
     }
     auto f = [this,ownBook,analyseMode,moves,maxDepth,maxNodes,maxPV,minProbeDepth]() {
         Numa::instance().bindThread(0);

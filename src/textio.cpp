@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2015  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -103,7 +103,19 @@ TextIO::readFEN(const std::string& fen) {
         if (fen[i] != '-') {
             if (i >= fen.length() - 1)
                 throw ChessParseError("Invalid en passant square");
-            pos.setEpSquare(getSquare(fen.substr(i, 2)));
+            int epSq = getSquare(fen.substr(i, 2));
+            if (epSq != -1) {
+                if (pos.isWhiteMove()) {
+                    if ((Position::getY(epSq) != 5) || (pos.getPiece(epSq) != Piece::EMPTY) ||
+                            (pos.getPiece(epSq - 8) != Piece::BPAWN))
+                        epSq = -1;
+                } else {
+                    if ((Position::getY(epSq) != 2) || (pos.getPiece(epSq) != Piece::EMPTY) ||
+                            (pos.getPiece(epSq + 8) != Piece::WPAWN))
+                        epSq = -1;
+                }
+                pos.setEpSquare(epSq);
+            }
         }
         while (i < fen.length() && fen[i] != ' ')
             i++;
@@ -636,3 +648,16 @@ TextIO::asciiBoard(U64 mask) {
     }
     return ret;
 }
+
+std::string
+TextIO::squareList(U64 mask) {
+    std::string ret;
+    while (mask) {
+        int sq = BitBoard::extractSquare(mask);
+        if (!ret.empty())
+            ret += ',';
+        ret += squareToString(sq);
+    }
+    return ret;
+}
+

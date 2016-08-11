@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2015  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -34,6 +34,7 @@
 #include <vector>
 #include <array>
 #include <algorithm>
+#include <memory>
 #include <atomic>
 #include <cctype>
 #include <iomanip>
@@ -55,6 +56,12 @@ template <typename T> class AlignedAllocator;
 template <typename T>
 class vector_aligned : public std::vector<T, AlignedAllocator<T>> { };
 
+template <typename T, typename ...Args>
+inline std::unique_ptr<T>
+make_unique(Args&&... args) {
+    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+}
+
 
 /** Helper class to perform static initialization of a class T. */
 template <typename T>
@@ -64,6 +71,22 @@ public:
         T::staticInitialize();
     }
 };
+
+/** Helper class to run code when a variable goes out of scope. */
+template <typename Func>
+class Finally {
+public:
+    Finally(Func func) : f(func) {}
+    ~Finally() { f(); }
+private:
+    Func f;
+};
+
+/** Run code when a variable goes out of scope. */
+template <typename Func>
+Finally<Func> finally(Func f) {
+    return Finally<Func>(f);
+}
 
 template <typename T>
 T clamp(T val, T min, T max) {
@@ -185,7 +208,7 @@ contains(const std::vector<T>& v, const T& e) {
 
 /** Return true if vector v contains element e converted to a string. */
 inline bool
-contains(const std::vector<std::string> v, const char* e) {
+contains(const std::vector<std::string>& v, const char* e) {
     return contains(v, std::string(e));
 }
 

@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2015  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -51,17 +51,23 @@ public:
     /** Get a score between 0 and 49, depending of the success/fail ratio of the move. */
     int getHistScore(const Position& pos, const Move& m) const;
 
+    /** Print all history tables. */
+    void print() const;
+
 private:
     static int depthWeight(int depth);
 
     static int depthTable[6];
 
-    struct Entry {
-        RelaxedShared<int> countSuccess;
-        RelaxedShared<int> countFail;
-        mutable RelaxedShared<int> score;
-    };
-    Entry ht[Piece::nPieceTypes][64];
+    static const int log2Scale = 10;
+    static const int scale = 1 << log2Scale;
+    static const int maxSum = 1000;          // max value of nSuccess + nFail
+    static const int maxVal = 50;            // getHistScore returns < maxVal
+
+    // Each entry has the following encoding:
+    // Bits  0-15: nSuccess + nFail
+    // Bits 16-31: histScore * scale
+    RelaxedShared<U32> ht[Piece::nPieceTypes][64];
 };
 
 
@@ -79,45 +85,37 @@ inline void
 History::addSuccess(const Position& pos, const Move& m, int depth) {
     int p = pos.getPiece(m.from());
     int cnt = depthWeight(depth);
-    Entry& e = ht[p][m.to()];
-    int val = e.countSuccess + cnt;
-    if (val + e.countFail > 1300) {
-        val /= 2;
-        e.countFail = e.countFail / 2;
-    }
-    e.countSuccess = val;
-    e.score = -1;
+    if (cnt == 0)
+        return;
+    U32 e = ht[p][m.to()];
+    int fpHistVal = e >> 16;
+    int sum = e & 0xffff;
+
+    fpHistVal = (fpHistVal * sum + (maxVal * scale - 1) * cnt) / (sum + cnt);
+    sum = std::min(sum + cnt, maxSum);
+    ht[p][m.to()] = (fpHistVal << 16) + sum;
 }
 
 inline void
 History::addFail(const Position& pos, const Move& m, int depth) {
     int p = pos.getPiece(m.from());
     int cnt = depthWeight(depth);
-    Entry& e = ht[p][m.to()];
-    int val = e.countFail + cnt;
-    if (val + e.countSuccess > 1300) {
-        val /= 2;
-        e.countSuccess = e.countSuccess / 2;
-    }
-    e.countFail = val;
-    e.score = -1;
+    if (cnt == 0)
+        return;
+    U32 e = ht[p][m.to()];
+    int fpHistVal = e >> 16;
+    int sum = e & 0xffff;
+
+    fpHistVal = fpHistVal * sum / (sum + cnt);
+    sum = std::min(sum + cnt, maxSum);
+    ht[p][m.to()] = (fpHistVal << 16) + sum;
 }
 
 inline int
 History::getHistScore(const Position& pos, const Move& m) const {
     int p = pos.getPiece(m.from());
-    const Entry& e = ht[p][m.to()];
-    int ret = e.score;
-    if (ret >= 0)
-        return ret;
-    int succ = e.countSuccess;
-    int fail = e.countFail;
-    if (succ + fail > 0) {
-        ret = succ * 49 / (succ + fail);
-    } else
-        ret = 0;
-    e.score = ret;
-    return ret;
+    U32 e = ht[p][m.to()];
+    return e >> (16 + log2Scale);
 }
 
 #endif /* HISTORY_HPP_ */

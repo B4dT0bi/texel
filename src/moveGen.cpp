@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2015  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -155,7 +155,7 @@ MoveGen::checkEvasions(const Position& pos, MoveList& moveList) {
     kingThreats |= pos.pieceTypeBB(OtherColor::PAWN) & myPawnAttacks;
     U64 validTargets = 0;
     if ((kingThreats != 0) && ((kingThreats & (kingThreats-1)) == 0)) { // Exactly one attacking piece
-        int threatSq = BitBoard::numberOfTrailingZeros(kingThreats);
+        int threatSq = BitBoard::firstSquare(kingThreats);
         validTargets = kingThreats | BitBoard::squaresBetween[kingSq][threatSq];
     }
     validTargets |= pos.pieceTypeBB(OtherColor::KING);

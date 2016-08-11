@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012,2014  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012,2014-2015  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -38,10 +38,10 @@
 int main(int argc, char* argv[]) {
     ComputerPlayer::initEngine();
     if ((argc == 2) && (std::string(argv[1]) == "txt")) {
-        std::shared_ptr<Player> whitePlayer = std::make_shared<HumanPlayer>();
-        std::shared_ptr<ComputerPlayer> blackPlayer = std::make_shared<ComputerPlayer>();
+        auto whitePlayer = make_unique<HumanPlayer>();
+        auto blackPlayer = make_unique<ComputerPlayer>();
         blackPlayer->setTTLogSize(21);
-        TUIGame game(whitePlayer, blackPlayer);
+        TUIGame game(std::move(whitePlayer), std::move(blackPlayer));
         game.play();
     } else if ((argc == 3) && (std::string(argv[1]) == "tree")) {
         TreeLoggerReader::main(argv[2]);

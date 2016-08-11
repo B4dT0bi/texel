@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -761,7 +761,6 @@ TreeLoggerReader::printNodeInfo(U64 index, int childNo, const std::string& filte
         std::string m = moveToStr(se.getMove());
         if ((filterMove.length() > 0) && (m != filterMove))
             return;
-        using SearchConst::plyScale;
         std::cout << std::setw(3) << childNo
                   << ' '   << std::setw(8) << index
                   << ' '   << std::setw(8) << se.t0Index
@@ -770,8 +769,7 @@ TreeLoggerReader::printNodeInfo(U64 index, int childNo, const std::string& filte
                   << " a:" << std::setw(6) << se.alpha
                   << " b:" << std::setw(6) << se.beta
                   << " p:" << std::setw(2) << (int)se.ply
-                  << " d:" << std::setw(2) << (int)se.depth/plyScale
-                           << '.' << ((int)se.depth % plyScale);
+                  << " d:" << std::setw(2) << (int)se.depth;
         if (haveEE) {
             int subTreeNodes = (se.endIndex - ee.startIndex - 1) / 2;
             std::string type;

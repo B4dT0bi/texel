@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012,2014-2015  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -200,7 +200,7 @@ UCIProtocol::handleCommand(const std::string& cmdLine, std::ostream& os) {
 void
 UCIProtocol::initEngine(std::ostream& os) {
     if (!engine)
-        engine = std::make_shared<EngineControl>(os);
+        engine = make_unique<EngineControl>(os);
 }
 
 /** Convert a string to tokens by splitting at whitespace characters. */

@@ -15,10 +15,11 @@ The Texel distribution contains the following pre-compiled executables:
 
 texel-arm      : For the armv7-a architecture. Should work on most modern
                  android devices.
+texel-arm64    : For the armv8-a 64-bit architecture.
 texel32.exe    : For 32-bit windows systems with SSE42 and POPCOUNT.
 texel32old.exe : For 32-bit windows systems without SSE42 and POPCOUNT.
 texel64        : For 64-bit linux intel systems with SSE42 and POPCOUNT.
-texel64.exe    : For 64-bit windows intel systems with SSE42 and POPCOUNT.
+texel64.exe    : For 64-bit windows 7 or later intel systems with SSE42 and POPCOUNT.
 texel64amd.exe : For 64-bit windows systems with SSE42 and POPCOUNT.
 texel64old.exe : For 64-bit windows systems without SSE42 and POPCOUNT.
 
@@ -38,8 +39,16 @@ Hash
 
 OwnBook
 
-  When set to true, Texel uses a small built in opening book. When set to false,
+  When set to true, Texel uses its own opening book. When set to false,
   Texel relies on the GUI to handle the opening book.
+
+BookFile
+
+  If set to the file name of an existing polyglot opening book file, Texel uses
+  this book when OwnBook is set to true. If set to an empty string, Texel uses
+  its own small built in book when OwnBook is true. BookFile is not used when
+  OwnBook is false. An opening book called texelbook.bin is included in this
+  distribution.
 
 Ponder
 
@@ -68,6 +77,11 @@ MultiPV
   Set to a value larger than 1 to find the N best moves when analyzing a
   position. This setting has no effect when playing games. The GUI normally
   handles this option so the user does not have to set it manually.
+
+UseNullMove
+
+  When set to true, the null move search heuristic is disabled. This can be
+  beneficial when analyzing positions where zugzwang is an important factor.
 
 GaviotaTbPath
 
@@ -159,8 +173,8 @@ as possible are used. This arrangement speeds up memory accesses.
 Compiling
 ---------
 
-The distribution contains a Makefile set up to to compile the program using the
-GCC compiler.
+The distribution contains a Makefile set up to compile the program using the GCC
+compiler.
 
 To build a generic executable that does not require any special CPU
 instructions, type "make" in a terminal window.
@@ -174,3 +188,39 @@ terminal window.
 There are other targets in the Makefile that can be used to build versions
 optimized for Intel CPUs and versions using the POPCNT CPU instruction. See the
 Makefile for details.
+
+
+Additional source code
+----------------------
+
+Source code for Texel's automatic test suite is provided in the test directory.
+The test program can be compiled by typing "make texeltest" in a terminal
+window.
+
+Source code for various tools used during Texel development is provided in the
+util directory. The utility program can be compiled by typing "make texelutil"
+in a terminal window. Note that this program uses OpenMP and depends on the
+libraries armadillo and gsl. It may not work unmodified in Windows.
+
+Source code for an interactive interface to the texel book building algorithm is
+provided in the bookgui directory. It depends on gtkmm and can probably only be
+compiled in linux.
+
+
+Copyright
+---------
+
+The core Texel chess engine is developed by Peter Österlund, but Texel also
+contains auxiliary code written by other people:
+
+Gaviota Tablebases Probing Code, Copyright 2010 Miguel A. Ballicora.
+See src/gtb/readme.txt for more information.
+
+LZMA compression by Igor Pavlov, used by the Gaviota Tablebases Probing code.
+
+Syzygy tablebases probing code, Copyright 2011-2013 Ronald de Man.
+
+Chess Cases font by Matthieu Leschemelle, used by the opening book builder
+graphical user interface.
+
+CUTE unit testing framework, Copyright Peter Sommerlad and Emanuel Graf.

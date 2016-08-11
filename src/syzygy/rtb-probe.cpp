@@ -469,7 +469,7 @@ static int probe_dtz_no_ep(Position& pos, int *success)
                 !MoveGen::isLegal(pos, move, inCheck))
                 continue;
             pos.makeMove(move, ui);
-            int v = -probe_ab(pos, -2, -wdl + 1, success);
+            int v = -Syzygy::probe_wdl(pos, success);
             pos.unMakeMove(move, ui);
             if (*success == 0) return 0;
             if (v == wdl)
@@ -576,7 +576,7 @@ int Syzygy::probe_dtz(Position& pos, int *success)
             if (v1 >= 0)
                 v = v1;
         } else if (v < 0) {
-            if (v1 >= 0 || v1 < 100)
+            if (v1 >= 0 || v1 < -100)
                 v = v1;
         } else if (v > 100) {
             if (v1 > 0)

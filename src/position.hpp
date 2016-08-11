@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2015  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -35,6 +35,11 @@
 #include "material.hpp"
 #include <algorithm>
 #include <iostream>
+
+
+namespace TBProbeData {
+    extern int maxPieces;
+}
 
 /**
  * Stores the state of a chess position.
@@ -77,11 +82,14 @@ public:
     /** Return the material identifier. */
     int materialId() const;
 
+    /** Return number of pieces, including kings and pawns. */
+    int nPieces() const;
+
     /**
      * Decide if two positions are equal in the sense of the draw by repetition rule.
      * @return True if positions are equal, false otherwise.
      */
-    bool drawRuleEquals(Position other) const;
+    bool drawRuleEquals(const Position& other) const;
 
     bool isWhiteMove() const;
 
@@ -297,7 +305,9 @@ Position::kingZobristHash() const {
 inline U64
 Position::historyHash() const {
     U64 ret = hashKey;
-    if (halfMoveClock >= 40) {
+    if (nPieces() <= TBProbeData::maxPieces) {
+        ret ^= moveCntKeys[std::min(halfMoveClock, 100)];
+    } else if (halfMoveClock >= 40) {
         if (halfMoveClock < 80)
             ret ^= moveCntKeys[halfMoveClock / 10];
         else
@@ -318,8 +328,13 @@ Position::materialId() const {
     return matId();
 }
 
+inline int
+Position::nPieces() const {
+    return BitBoard::bitCount(occupiedBB());
+}
+
 inline bool
-Position::drawRuleEquals(Position other) const {
+Position::drawRuleEquals(const Position& other) const {
     for (int i = 0; i < 64; i++)
         if (squares[i] != other.squares[i])
             return false;

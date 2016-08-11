@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2016  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -74,6 +74,7 @@ public:
     /** Interface for reporting search information during search. */
     class Listener {
     public:
+        virtual ~Listener() {}
         virtual void notifyDepth(int depth) = 0;
         virtual void notifyCurrMove(const Move& m, int moveNr) = 0;
         virtual void notifyPV(int depth, int score, int time, U64 nodes, int nps,
@@ -83,7 +84,7 @@ public:
         virtual void notifyStats(U64 nodes, int nps, U64 tbHits, int time) = 0;
     };
 
-    void setListener(const std::shared_ptr<Listener>& listener);
+    void setListener(std::unique_ptr<Listener> listener);
 
     /** Exception thrown to stop the search. */
     class StopSearch : public std::exception {
@@ -91,15 +92,16 @@ public:
 
     class StopHandler {
     public:
+        virtual ~StopHandler() {}
         virtual bool shouldStop() = 0;
     };
 
-    void setStopHandler(const std::shared_ptr<StopHandler>& stopHandler);
+    void setStopHandler(std::unique_ptr<StopHandler> stopHandler);
 
     /** Set which thread is owning this Search object. */
     void setThreadNo(int tNo);
 
-    void timeLimit(int minTimeLimit, int maxTimeLimit);
+    void timeLimit(int minTimeLimit, int maxTimeLimit, int earlyStopPercent = -1);
 
     void setStrength(int strength, U64 randomSeed);
 
@@ -107,7 +109,7 @@ public:
     void setMinProbeDepth(int depth);
 
     Move iterativeDeepening(const MoveList& scMovesIn,
-                            int maxDepth, U64 initialMaxNodes, bool verbose,
+                            int maxDepth, S64 initialMaxNodes, bool verbose,
                             int maxPV = 1, bool onlyExact = false,
                             int minProbeDepth = 0);
 
@@ -149,6 +151,12 @@ public:
     /** Get number of TB hits for this thread. */
     S64 getTbHitsThisThread() const;
 
+    /**
+     * Static exchange evaluation function.
+     * @return SEE score for m. Positive value is good for the side that makes the first move.
+     */
+    static int SEE(Position& pos, const Move& m);
+
 private:
     void init(const Position& pos0, const std::vector<U64>& posHashList0,
               int posHashListSize0);
@@ -157,10 +165,11 @@ private:
     struct MoveInfo {
         Move move;
         U64 nodes;
+        bool knownLoss;
         int depth, alpha, beta;
         std::vector<Move> pv;
         MoveInfo(const Move& m, int n)
-            : move(m), nodes(n), depth(0), alpha(0), beta(0) {}
+            : move(m), nodes(n), knownLoss(false), depth(0), alpha(0), beta(0) {}
 
         int score() const { return move.score(); }
 
@@ -233,7 +242,7 @@ private:
     class DefaultStopHandler : public StopHandler {
     public:
         DefaultStopHandler(Search& sc0) : sc(sc0) { }
-        bool shouldStop() { return sc.shouldStop(); }
+        bool shouldStop() override { return sc.shouldStop(); }
     private:
         Search& sc;
     };
@@ -241,6 +250,8 @@ private:
     /** Return true if the search should be stopped immediately. */
     bool shouldStop();
 
+    /** Throw a FailHighException if a helper thread has failed high. */
+    void checkHelperFailHigh() const;
 
 
     Position pos;
@@ -258,8 +269,8 @@ private:
     bool mainNumaNode; // True if this thread runs on the NUMA node holding the transposition table
     TreeLogger& logFile;
 
-    std::shared_ptr<Listener> listener;
-    std::shared_ptr<StopHandler> stopHandler;
+    std::unique_ptr<Listener> listener;
+    std::unique_ptr<StopHandler> stopHandler;
     Move emptyMove;
 
     static const int MAX_SEARCH_DEPTH = 100;
@@ -269,6 +280,7 @@ private:
     S64 tStart;                // Time when search started
     RelaxedShared<S64> minTimeMillis; // Minimum recommended thinking time
     RelaxedShared<S64> maxTimeMillis; // Maximum allowed thinking time
+    int earlyStopPercentage;   // Can stop searching after this many percent of minTimeMillis
     bool searchNeedMoreTime;   // True if negaScout should use up to maxTimeMillis time.
     S64 maxNodes;              // Maximum number of nodes to search (approximately)
     int minProbeDepth;         // Minimum depth to probe endgame tablebases.
@@ -297,13 +309,13 @@ Search::SearchTables::SearchTables(TranspositionTable& tt0, KillerTable& kt0, Hi
 }
 
 inline void
-Search::setListener(const std::shared_ptr<Listener>& listener) {
-    this->listener = listener;
+Search::setListener(std::unique_ptr<Listener> listener) {
+    this->listener = std::move(listener);
 }
 
 inline void
-Search::setStopHandler(const std::shared_ptr<StopHandler>& stopHandler) {
-    this->stopHandler = stopHandler;
+Search::setStopHandler(std::unique_ptr<StopHandler> stopHandler) {
+    this->stopHandler = std::move(stopHandler);
 }
 
 inline bool
@@ -329,14 +341,19 @@ Search::passedPawnPush(const Position& pos, const Move& m) {
             return false;
         if ((BitBoard::wPawnBlockerMask[m.to()] & pos.pieceTypeBB(Piece::BPAWN)) != 0)
             return false;
-        return m.to() >= 40;
+        return m.to() >= A6;
     } else {
         if (p != Piece::BPAWN)
             return false;
         if ((BitBoard::bPawnBlockerMask[m.to()] & pos.pieceTypeBB(Piece::WPAWN)) != 0)
             return false;
-        return m.to() <= 23;
+        return m.to() <= H3;
     }
+}
+
+inline int
+Search::SEE(const Move& m) {
+    return SEE(pos, m);
 }
 
 inline int
@@ -396,9 +413,9 @@ Search::negaScout(bool smp, bool tb,
                   int alpha, int beta, int ply, int depth, int recaptureSquare,
                   const bool inCheck) {
     using namespace SearchConst;
-    int minDepth = pd.wq.getMinSplitDepth() * plyScale;
+    int minDepth = pd.wq.getMinSplitDepth();
     if (threadNo == 0)
-        minDepth = (minDepth + MIN_SMP_DEPTH * plyScale) / 2;
+        minDepth = (minDepth + MIN_SMP_DEPTH) / 2;
     if (smp && (depth >= minDepth) &&
                ((int)spVec.size() < MAX_SP_PER_THREAD)) {
         bool tb2 = tb && depth >= minProbeDepth;
@@ -448,7 +465,7 @@ Search::getTbHitsThisThread() const {
 
 inline void
 Search::setMinProbeDepth(int depth) {
-    minProbeDepth = depth * SearchConst::plyScale;
+    minProbeDepth = depth;
 }
 
 #endif /* SEARCH_HPP_ */

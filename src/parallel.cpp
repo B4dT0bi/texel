@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2013-2014  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2013-2015  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -53,7 +53,7 @@ void
 WorkerThread::start() {
     assert(!thread);
     const int minProbeDepth = TBProbe::tbEnabled() ? UciParams::minProbeDepth->getIntPar() : 100;
-    thread = std::make_shared<std::thread>([this,minProbeDepth](){ mainLoop(minProbeDepth); });
+    thread = make_unique<std::thread>([this,minProbeDepth](){ mainLoop(minProbeDepth); });
 }
 
 void
@@ -77,7 +77,7 @@ public:
     ThreadStopHandler(const ThreadStopHandler&) = delete;
     ThreadStopHandler& operator=(const ThreadStopHandler&) = delete;
 
-    bool shouldStop();
+    bool shouldStop() override;
 
 private:
     /** Report searched nodes since last call to ParallelData object. */
@@ -153,16 +153,14 @@ WorkerThread::mainLoop(int minProbeDepth) {
     if (!et)
         et = Evaluate::getEvalHashTables();
     if (!kt)
-        kt = std::make_shared<KillerTable>();
+        kt = make_unique<KillerTable>();
     if (!ht)
-        ht = std::make_shared<History>();
+        ht = make_unique<History>();
 
     TreeLogger logFile;
     logFile.open("/home/petero/treelog.dmp", pd, threadNo);
 
 //    UtilizationTimer uTimer;
-    std::mutex m;
-    std::unique_lock<std::mutex> lock(m);
     Position pos;
     std::shared_ptr<SplitPoint> sp;
     for (int iter = 0; ; iter++) {
@@ -188,21 +186,23 @@ WorkerThread::mainLoop(int minProbeDepth) {
             *kt = sp->getKillerTable();
         }
         Search::SearchTables st(tt, *kt, *ht, *et);
-        sp->getPos(pos, spMove.getMove());
+        sp->getPos(pos);
+        const U64 rootNodeIdx = logFile.logPosition(pos, sp->owningThread(),
+                                                    sp->getSearchTreeInfo().nodeIdx, moveNo);
+        UndoInfo ui;
+        pos.makeMove(spMove.getMove(), ui);
         std::vector<U64> posHashList;
         int posHashListSize;
         sp->getPosHashList(pos, posHashList, posHashListSize);
         Search sc(pos, posHashList, posHashListSize, st, pd, sp, logFile);
-        const U64 rootNodeIdx = logFile.logPosition(pos, sp->owningThread(),
-                                                    sp->getSearchTreeInfo().nodeIdx, moveNo);
         sc.setThreadNo(threadNo);
         sc.setMinProbeDepth(minProbeDepth);
         const int alpha = sp->getAlpha();
         const int beta = sp->getBeta();
         const S64 nodes0 = pd.getNumSearchedNodes();
-        auto stopHandler(std::make_shared<ThreadStopHandler>(*this, pd, *sp, spMove,
-                                                             sc, alpha, nodes0, prio));
-        sc.setStopHandler(stopHandler);
+        auto stopHandler = make_unique<ThreadStopHandler>(*this, pd, *sp, spMove,
+                                                          sc, alpha, nodes0, prio);
+        sc.setStopHandler(std::move(stopHandler));
         const int ply = sp->getPly();
         const int lmr = spMove.getLMR();
         const int captSquare = spMove.getRecaptureSquare();
@@ -212,7 +212,7 @@ WorkerThread::mainLoop(int minProbeDepth) {
 //            log([&](std::ostream& os){os << "th:" << threadNo << " seqNo:" << sp->getSeqNo() << " ply:" << ply
 //                                         << " c:" << sp->getCurrMoveNo() << " m:" << moveNo
 //                                         << " a:" << alpha << " b:" << beta
-//                                         << " d:" << depth/SearchConst::plyScale
+//                                         << " d:" << depth
 //                                         << " p:" << sp->getPMoveUseful(pd.fhInfo, moveNo) << " start";});
 //            uTimer.setPUseful(pUseful);
             const bool smp = pd.numHelperThreads() > 1;
@@ -229,8 +229,10 @@ WorkerThread::mainLoop(int minProbeDepth) {
 //            log([&](std::ostream& os){os << "th:" << threadNo << " seqNo:" << sp->getSeqNo() << " ply:" << ply
 //                                         << " c:" << sp->getCurrMoveNo() << " m:" << moveNo
 //                                         << " a:" << alpha << " b:" << beta << " s:" << score
-//                                         << " d:" << depth/SearchConst::plyScale << " n:" << sc.getTotalNodesThisThread();});
+//                                         << " d:" << depth << " n:" << sc.getTotalNodesThisThread();});
             pd.wq.moveFinished(sp, moveNo, cancelRemaining, score);
+            if (cancelRemaining)
+                pd.setHelperFailHigh(sp->owningThread(), true);
         } catch (const Search::StopSearch&) {
 //            log([&](std::ostream& os){os << "th:" << threadNo << " seqNo:" << sp->getSeqNo() << " m:" << moveNo
 //                                         << " aborted n:" << sc.getTotalNodesThisThread();});
@@ -529,7 +531,10 @@ ParallelData::addRemoveWorkers(int numWorkers) {
         threads.pop_back();
     }
     for (int i = threads.size(); i < numWorkers; i++)
-        threads.push_back(std::make_shared<WorkerThread>(i+1, *this, tt));
+        threads.push_back(make_unique<WorkerThread>(i+1, *this, tt));
+    helperFailHigh.resize(numWorkers + 1);
+    for (int i = 0; i < numWorkers + 1; i++)
+        helperFailHigh[i] = make_unique<RelaxedShared<bool>>(false);
 }
 
 void
@@ -605,10 +610,8 @@ SplitPoint::getPMoveUseful(const FailHighInfo& fhInfo, int moveNo) const {
 }
 
 void
-SplitPoint::getPos(Position& pos, const Move& move) const {
+SplitPoint::getPos(Position& pos) const {
     pos = this->pos;
-    UndoInfo ui;
-    pos.makeMove(move, ui);
 }
 
 void
