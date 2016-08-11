@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -26,12 +26,13 @@
 #define _GLIBCXX_USE_NANOSLEEP
 
 #include "enginecontrol.hpp"
-#include "random.hpp"
+#include "util/random.hpp"
 #include "searchparams.hpp"
 #include "computerPlayer.hpp"
 #include "textio.hpp"
 #include "parameters.hpp"
 #include "moveGen.hpp"
+#include "util/logger.hpp"
 
 #include <iostream>
 #include <memory>
@@ -45,17 +46,21 @@ EngineControl::SearchListener::SearchListener(std::ostream& os0)
 
 void
 EngineControl::SearchListener::notifyDepth(int depth) {
+//    std::lock_guard<std::mutex> L(Logger::getLogMutex());
     os << "info depth " << depth << std::endl;
 }
 
 void
 EngineControl::SearchListener::notifyCurrMove(const Move& m, int moveNr) {
+//    std::lock_guard<std::mutex> L(Logger::getLogMutex());
     os << "info currmove " << moveToString(m) << " currmovenumber " << moveNr << std::endl;
 }
 
 void
 EngineControl::SearchListener::notifyPV(int depth, int score, int time, U64 nodes, int nps, bool isMate,
-                                        bool upperBound, bool lowerBound, const std::vector<Move>& pv) {
+                                        bool upperBound, bool lowerBound, const std::vector<Move>& pv,
+                                        int multiPVIndex) {
+//    std::lock_guard<std::mutex> L(Logger::getLogMutex());
     std::string pvBuf;
     for (size_t i = 0; i < pv.size(); i++) {
         pvBuf += ' ';
@@ -69,7 +74,10 @@ EngineControl::SearchListener::notifyPV(int depth, int score, int time, U64 node
     }
     os << "info depth " << depth << " score " << (isMate ? "mate " : "cp ")
        << score << bound << " time " << time << " nodes " << nodes
-       << " nps " << nps << " pv" << pvBuf << std::endl;
+       << " nps " << nps;
+    if (multiPVIndex >= 0)
+        os << " multipv " << (multiPVIndex + 1);
+    os << " pv" << pvBuf << std::endl;
 }
 
 void
@@ -81,14 +89,11 @@ EngineControl::EngineControl(std::ostream& o)
     : os(o),
       shouldDetach(true),
       tt(8),
-      hashSizeMB(16),
-      ownBook(false),
-      analyseMode(false),
-      ponderMode(true),
-      strength(1000),
+      pd(tt),
       randomSeed(0)
 {
     setupTT();
+    et = Evaluate::getEvalHashTables();
 }
 
 void
@@ -142,16 +147,6 @@ EngineControl::newGame() {
     ht.init();
 }
 
-template <typename T>
-T clamp(T val, T min, T max) {
-    if (val < min)
-        return min;
-    else if (val > max)
-        return max;
-    else
-        return val;
-}
-
 /**
  * Compute thinking time for current search.
  */
@@ -177,34 +172,32 @@ EngineControl::computeTimeLimit(const SearchParams& sPar) {
         int moves = sPar.movesToGo;
         if (moves == 0)
             moves = 999;
-        moves = std::min(moves, 45); // Assume 45 more moves until end of game
-        bool white = pos.whiteMove;
+        moves = std::min(moves, static_cast<int>(timeMaxRemainingMoves)); // Assume at most N more moves until end of game
+        bool white = pos.getWhiteMove();
         int time = white ? sPar.wTime : sPar.bTime;
         int inc  = white ? sPar.wInc : sPar.bInc;
-        const int margin = std::min(1000, time * 9 / 10);
+        const int margin = std::min(static_cast<int>(bufferTime), time * 9 / 10);
         int timeLimit = (time + inc * (moves - 1) - margin) / moves;
-        minTimeLimit = (int)(timeLimit * 0.85);
-        if (ponderMode) {
-            const double ponderHitRate = 0.35;
+        minTimeLimit = (int)(timeLimit * minTimeUsage * 0.01);
+        if (Parameters::instance().getBoolPar("Ponder")) {
+            const double ponderHitRate = timePonderHitRate * 0.01;
             minTimeLimit = (int)ceil(minTimeLimit / (1 - ponderHitRate));
         }
-        maxTimeLimit = (int)(minTimeLimit * clamp(moves * 0.5, 2.5, 4.0));
+        maxTimeLimit = (int)(minTimeLimit * clamp(moves * 0.5, 2.5, static_cast<int>(maxTimeUsage) * 0.01));
 
         // Leave at least 1s on the clock, but can't use negative time
         minTimeLimit = clamp(minTimeLimit, 1, time - margin);
         maxTimeLimit = clamp(maxTimeLimit, 1, time - margin);
-
-        // FIXME!! Reduce time if last N (three?) iterations found the same best move
-        // FIXME!! Stop search if minTimeLimit/N time (summed over all iterations) has been spent thinking about the currently best move.
-        // FIXME!! Stop search if minTimeLimit/N has been spent, and best move has accounted for more than x% of total thinking time.
     }
 }
 
 void
 EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int maxDepth, int maxNodes) {
-    sc = std::make_shared<Search>(pos, posHashList, posHashListSize, tt, ht);
+    Parameters& par = Parameters::instance();
+    Search::SearchTables st(tt, kt, ht, *et);
+    sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, pd, nullptr, treeLog);
     sc->setListener(std::make_shared<SearchListener>(os));
-    sc->setStrength(strength, randomSeed);
+    sc->setStrength(par.getIntPar("Strength"), randomSeed);
     std::shared_ptr<MoveGen::MoveList> moves(std::make_shared<MoveGen::MoveList>());
     MoveGen::pseudoLegalMoves(pos, *moves);
     MoveGen::removeIllegal(pos, *moves);
@@ -223,16 +216,30 @@ EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int maxDepth, int
             }
         }
     }
+    pd.addRemoveWorkers(par.getIntPar("Threads") - 1);
+    pd.wq.resetSplitDepth();
+    pd.startAll();
     sc->timeLimit(minTimeLimit, maxTimeLimit);
     tt.nextGeneration();
-    auto f = [this,moves,maxDepth,maxNodes](void) {
+    bool ownBook = par.getBoolPar("OwnBook");
+    bool analyseMode = par.getBoolPar("UCI_AnalyseMode");
+    int maxPV = (infinite || analyseMode) ? par.getIntPar("MultiPV") : 1;
+    if (analyseMode) {
+        Evaluate eval(*et);
+        int evScore = eval.evalPosPrint(pos) * (pos.getWhiteMove() ? 1 : -1);
+        std::stringstream ss;
+        ss.precision(2);
+        ss << std::fixed << (evScore / 100.0);
+        os << "info string Eval: " << ss.str() << std::endl;
+    }
+    auto f = [this,ownBook,analyseMode,moves,maxDepth,maxNodes,maxPV]() {
         Move m;
         if (ownBook && !analyseMode) {
             Book book(false);
             book.getBookMove(pos, m);
         }
         if (m.isEmpty())
-            m = sc->iterativeDeepening(*moves, maxDepth, maxNodes, false);
+            m = sc->iterativeDeepening(*moves, maxDepth, maxNodes, false, maxPV);
         while (ponder || infinite) {
             // We should not respond until told to do so. Just wait until
             // we are allowed to respond.
@@ -244,15 +251,18 @@ EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int maxDepth, int
         if (!ponderMove.isEmpty())
             os << " ponder " << moveToString(ponderMove);
         os << std::endl;
-        if (shouldDetach)
+        if (shouldDetach) {
             engineThread->detach();
+            pd.stopAll();
+            pd.fhInfo.reScale();
+        }
         engineThread.reset();
         sc.reset();
     };
     shouldDetach = true;
     {
         std::lock_guard<std::mutex> L(threadMutex);
-        engineThread.reset(new std::thread(f));
+        engineThread = std::make_shared<std::thread>(f);
     }
 }
 
@@ -271,13 +281,16 @@ EngineControl::stopThread() {
     }
     if (myThread)
         myThread->join();
+    pd.stopAll();
+    pd.fhInfo.reScale();
 }
 
 void
 EngineControl::setupTT() {
+    int hashSizeMB = Parameters::instance().getIntPar("Hash");
     U64 nEntries = hashSizeMB > 0 ? ((U64)hashSizeMB) * (1 << 20) / sizeof(TranspositionTable::TTEntry)
 	                          : (U64)1024;
-    volatile int logSize = 0;
+    int logSize = 0;
     while (nEntries > 1) {
         logSize++;
         nEntries /= 2;
@@ -304,6 +317,8 @@ EngineControl::setupPosition(Position pos, const std::vector<Move>& moves) {
         const Move& m = moves[i];
         posHashList[posHashListSize++] = pos.zobristHash();
         pos.makeMove(m, ui);
+        if (pos.getHalfMoveClock() == 0)
+            posHashListSize = 0;
     }
     this->pos = pos;
 }
@@ -319,8 +334,9 @@ EngineControl::getPonderMove(Position pos, const Move& m) {
     UndoInfo ui;
     pos.makeMove(m, ui);
     TranspositionTable::TTEntry ent;
+    ent.clear();
     tt.probe(pos.historyHash(), ent);
-    if (ent.type != TType::T_EMPTY) {
+    if (ent.getType() != TType::T_EMPTY) {
         ent.getMove(ret);
         MoveGen::MoveList moves;
         MoveGen::pseudoLegalMoves(pos, moves);
@@ -369,36 +385,26 @@ EngineControl::moveToString(const Move& m) {
 
 void
 EngineControl::printOptions(std::ostream& os) {
-    os << "option name Hash type spin default 16 min 1 max 524288" << std::endl;
-    os << "option name OwnBook type check default false" << std::endl;
-    os << "option name Ponder type check default true" << std::endl;
-    os << "option name UCI_AnalyseMode type check default false" << std::endl;
-    os << "option name UCI_EngineAbout type string default " << ComputerPlayer::engineName
-            << " by Peter Osterlund, see http://web.comhem.se/petero2home/javachess/index.html" << std::endl;
-    os << "option name Strength type spin default 1000 min 0 max 1000" << std::endl;
-
-
     std::vector<std::string> parNames;
     Parameters::instance().getParamNames(parNames);
-    for (size_t i = 0; i < parNames.size(); i++) {
-        std::string pName = parNames[i];
+    for (const auto& pName : parNames) {
         std::shared_ptr<Parameters::ParamBase> p = Parameters::instance().getParam(pName);
         switch (p->type) {
         case Parameters::CHECK: {
-            const Parameters::CheckParam& cp = static_cast<const Parameters::CheckParam&>(*p.get());
+            const Parameters::CheckParam& cp = dynamic_cast<const Parameters::CheckParam&>(*p.get());
             os << "option name " << cp.name << " type check default "
-                    << (cp.defaultValue?"true":"false") << std::endl;
+               << (cp.defaultValue?"true":"false") << std::endl;
             break;
         }
         case Parameters::SPIN: {
-            const Parameters::SpinParam& sp = static_cast<const Parameters::SpinParam&>(*p.get());
+            const Parameters::SpinParamBase& sp = dynamic_cast<const Parameters::SpinParamBase&>(*p.get());
             os << "option name " << sp.name << " type spin default "
-                    << sp.defaultValue << " min " << sp.minValue
-                    << " max " << sp.maxValue << std::endl;
+               << sp.getDefaultValue() << " min " << sp.getMinValue()
+               << " max " << sp.getMaxValue() << std::endl;
             break;
         }
         case Parameters::COMBO: {
-            const Parameters::ComboParam& cp = static_cast<const Parameters::ComboParam&>(*p.get());
+            const Parameters::ComboParam& cp = dynamic_cast<const Parameters::ComboParam&>(*p.get());
             os << "option name " << cp.name << " type combo default " << cp.defaultValue;
             for (size_t i = 0; i < cp.allowedValues.size(); i++)
                 os << " var " << cp.allowedValues[i];
@@ -409,9 +415,9 @@ EngineControl::printOptions(std::ostream& os) {
             os << "option name " << p->name << " type button" << std::endl;
             break;
         case Parameters::STRING: {
-            const Parameters::StringParam& sp = static_cast<const Parameters::StringParam&>(*p.get());
+            const Parameters::StringParam& sp = dynamic_cast<const Parameters::StringParam&>(*p.get());
             os << "option name " << sp.name << " type string default "
-                    << sp.defaultValue << std::endl;
+               << sp.defaultValue << std::endl;
             break;
         }
         }
@@ -420,18 +426,7 @@ EngineControl::printOptions(std::ostream& os) {
 
 void
 EngineControl::setOption(const std::string& optionName, const std::string& optionValue) {
-    if (optionName == "hash") {
-        str2Num(optionValue, hashSizeMB);
+    Parameters::instance().set(optionName, optionValue);
+    if (optionName == "hash")
         setupTT();
-    } else if (optionName == "ownbook") {
-        ownBook = (toLowerCase(optionValue) == "true");
-    } else if (optionName == "ponder") {
-        ponderMode = (toLowerCase(optionValue) == "true");
-    } else if (optionName == "uci_analysemode") {
-        analyseMode = (toLowerCase(optionValue) == "true");
-    } else if (optionName == "strength") {
-        str2Num(optionValue, strength);
-    } else {
-        Parameters::instance().set(optionName, optionValue);
-    }
 }

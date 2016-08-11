@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -31,7 +31,7 @@
 
 #include "chessParseError.hpp"
 #include "position.hpp"
-#include "util.hpp"
+#include "util/util.hpp"
 
 
 class MoveGen;
@@ -72,8 +72,8 @@ public:
 
     /**
      * Convert a chess move string to a Move object.
-     * Any prefix of the string representation of a valid move counts as a legal move string,
-     * as long as the string only matches one valid move.
+     * The string may specify any combination of piece/source/target/promotion
+     * information as long as it matches exactly one valid move.
      */
     static Move stringToMove(Position& pos, const std::string& strMove);
 
@@ -96,10 +96,7 @@ public:
 private:
     static void safeSetPiece(Position& pos, int col, int row, int p);
 
-    /**
-     * Convert move string to lower case and remove special check/mate symbols.
-     */
-    static std::string normalizeMoveString(const std::string& str);
+    static int charToPiece(bool white, char c);
 };
 
 inline int
@@ -126,7 +123,6 @@ TextIO::squareToString(int square)
 
 inline void
 TextIO::safeSetPiece(Position& pos, int col, int row, int p) {
-    if (row < 0) throw ChessParseError("Too many rows");
     if (col > 7) throw ChessParseError("Too many columns");
     if ((p == Piece::WPAWN) || (p == Piece::BPAWN))
         if ((row == 0) || (row == 7))
@@ -134,15 +130,23 @@ TextIO::safeSetPiece(Position& pos, int col, int row, int p) {
     pos.setPiece(Position::getSquare(col, row), p);
 }
 
-inline std::string
-TextIO::normalizeMoveString(const std::string& strIn) {
-    std::string str(strIn);
-    if (str.length() > 0) {
-        char lastChar = str[str.length() - 1];
-        if ((lastChar == '#') || (lastChar == '+'))
-            str = str.substr(0, str.length() - 1);
+inline int
+TextIO::charToPiece(bool white, char c) {
+    switch (c) {
+    case 'Q': case 'q': return white ? Piece::WQUEEN  : Piece::BQUEEN;
+    case 'R': case 'r': return white ? Piece::WROOK   : Piece::BROOK;
+    case 'B':           return white ? Piece::WBISHOP : Piece::BBISHOP;
+    case 'N': case 'n': return white ? Piece::WKNIGHT : Piece::BKNIGHT;
+    case 'K': case 'k': return white ? Piece::WKING   : Piece::BKING;
+    case 'P': case 'p': return white ? Piece::WPAWN   : Piece::BPAWN;
     }
-    return str;
+    return -1;
+}
+
+inline
+std::ostream& operator<<(std::ostream& os, const Move& m) {
+    os << TextIO::moveToUCIString(m);
+    return os;
 }
 
 #endif /* TEXTIO_HPP_ */

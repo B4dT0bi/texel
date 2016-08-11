@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,35 +17,15 @@
 */
 
 /*
- * random.cpp
+ * logger.cpp
  *
- *  Created on: Mar 3, 2012
+ *  Created on: Aug 6, 2013
  *      Author: petero
  */
 
-#include "random.hpp"
+#include "logger.hpp"
 
-
-Random::Random()
-    : gen(currentTimeMillis()) {
-}
-
-Random::Random(U64 seed)
-    : gen(seed) {
-}
-
-void
-Random::setSeed(U64 seed) {
-    gen.seed(seed);
-}
-
-int
-Random::nextInt(int modulo) {
-    std::uniform_int_distribution<int> dist(0, modulo-1);
-    return dist(gen);
-}
-
-U64
-Random::nextU64() {
-    return gen();
+std::mutex& Logger::getLogMutex() {
+    static std::mutex m;
+    return m;
 }

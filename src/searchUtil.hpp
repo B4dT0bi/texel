@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,23 +17,34 @@
 */
 
 /*
- * util.cpp
+ * searchUtil.hpp
  *
- *  Created on: Mar 2, 2012
+ *  Created on: Jul 15, 2013
  *      Author: petero
  */
 
-#include "util.hpp"
+#ifndef SEARCHUTIL_HPP_
+#define SEARCHUTIL_HPP_
 
-#include <chrono>
-#include <iostream>
+#include "move.hpp"
 
-S64 currentTimeMillis() {
-    auto t = std::chrono::high_resolution_clock::now();
-    auto t0 = t.time_since_epoch();
-    auto x = t0.count();
-    typedef decltype(t0) T0Type;
-    auto n = T0Type::period::num;
-    auto d = T0Type::period::den;
-    return (S64)(x * (1000.0 * n / d));
+
+struct SearchTreeInfo {
+    SearchTreeInfo();
+
+    bool allowNullMove;    // Don't allow two null-moves in a row
+    Move bestMove;         // Copy of the best found move at this ply
+    Move currentMove;      // Move currently being searched
+    int currentMoveNo;     // Index of currentMove in move list
+    int lmr;               // LMR reduction amount
+    U64 nodeIdx;           // For tree logging
+};
+
+
+inline
+SearchTreeInfo::SearchTreeInfo()
+    : allowNullMove(true), lmr(0), nodeIdx(0) {
 }
+
+
+#endif /* SEARCHUTIL_HPP_ */

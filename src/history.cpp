@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -42,8 +42,8 @@ History::reScale() {
     for (int p = 0; p < Piece::nPieceTypes; p++) {
         for (int sq = 0; sq < 64; sq++) {
             Entry& e = ht[p][sq];
-            e.countSuccess /= 4;
-            e.countFail /= 4;
+            e.countSuccess = e.countSuccess / 4;
+            e.countFail = e.countFail / 4;
         }
     }
 }
