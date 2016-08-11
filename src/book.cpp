@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -107,11 +107,9 @@ Book::initBook() {
     bookMap.clear();
     rndGen.setSeed(currentTimeMillis());
     numBookMoves = 0;
-//        InputStream inStream = getClass().getResourceAsStream("/book.bin");
     std::vector<byte> buf;
     createBinBook(buf);
 
-    // FIXME!!
     Position startPos(TextIO::readFEN(TextIO::startPosFEN));
     Position pos(startPos);
     UndoInfo ui;
@@ -292,7 +290,10 @@ Book::bookLines[] = {
 
     // Kings gambit
     "e4 e5 f4 exf4 Nf3 d5 exd5 Nf6 Nc3 Nxd5 Nxd5 Qxd5 d4 Be7 c4 Qe4+ Be2 Nc6",
-    "e4 e5 f4 exf4 Nf3 Be7 Bc4 Nf6 e5 Ng4 O-O Nc6 d4 d5 exd6 Qxd6",
+    "e4 e5 f4 exf4 Nf3? Be7 Bc4 Nf6 e5 Ng4 O-O Nc6 d4 d5 exd6 Qxd6",
+    "e4 e5 f4? exf4 Bc4 Nf6 Nc3 c6 d4 Bb4 Ne2 d5 exd5 f3",
+    "e4 e5 f4? d5 exd5 exf4 Nf3 Nf6 Nc3 Nxd5 Bc4 Qe7 Qe2",
+    "e4 e5 f4? d5? exd5 e4? d3 Nf6 dxe4 Nxe4 Nf3 Bc5 Qe2",
 
     // Spanish
     "e4 e5 Nf3 Nc6 Bb5 d6 d4 Bd7 Nc3 Nf6 O-O Be7 Re1 exd4 Nxd4 O-O",
@@ -308,12 +309,12 @@ Book::bookLines[] = {
     "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 d6 O-O Bd7 c3 g6 d4 Bg7 Re1 Nge7 Be3 O-O Nbd2 h6 dxe5 dxe5 Bb3 b6 a4",
     "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 d6 c3 Bd7 d4 Nge7 Bb3 h6 Nbd2 Ng6 Nc4 Be7 Ne3 O-O",
     "e4 e5 Nf3 Nc6 Bb5 Nf6 O-O Bc5 c3 O-O d4 Bb6 Bg5 h6 Bh4 d6 a4 a5 Re1 exd4 Bxc6 bxc6 Nxd4",
-    "e4 e5 Nf3 Nc6 Bb5 Nf6? O-O Bc5 Nxe5 Nxe5 d4 a6 Ba4 Nxe4 Qe2 Be7 Qxe4 Ng6",
+    "e4 e5 Nf3 Nc6 Bb5 Nf6? O-O Bc5 Nxe5 Nxe5 d4 a6 Ba4 b5 Bb3 Bxd4 Qxd4 d6",
     "e4 e5 Nf3 Nc6 Bb5 Nf6? O-O Bc5? Nc3? O-O d3 d6",
 
     // Scandinavian
     "e4 d5 exd5 Qxd5 Nc3 Qa5 d4 Nf6 Nf3 Bf5 Bc4 e6 Bd2 c6 Qe2 Bb4 Ne5 Nbd7 Nxd7 Nxd7 a3",
-    "e4 d5 exd5 Qxd5 Nc3 Qa5 d4 c6 Nf3 Nf6 Bc4 Bg4 h3 Bh5 g4 Bg6 Bd2 Qb6 Qe2",
+    "e4 d5? exd5 Qxd5 Nc3 Qa5 d4 c6 Nf3 Nf6 Bc4 Bg4 h3 Bh5 g4 Bg6 Bd2 Qb6 Qe2",
     "e4 d5 exd5 Nf6 d4 Nxd5 c4 Nb6 Nf3 g6 Nc3 Bg7 Be3 O-O h3 Nc6 Qd2 e5 d5",
     "e4 d5? exd5 Nf6 d4 Nxd5 Nf3 g6 c4 Nb6",
     "e4 d5? exd5 Nf6 d4 Nxd5 Nf3 g6 Be2 Bg7 O-O O-O c4 Nb6 Nc3 Nc6 d5 Ne5",
@@ -330,13 +331,14 @@ Book::bookLines[] = {
     "c4? Nf6 Nc3 e6 Nf3 d5 d4 Be7 e3 O-O Bd3 c5",
     "Nf3? d5 d4 Nf6 c4 e6 Nc3 Be7 Bf4 O-O e3 c5 dxc5 Bxc5 Qc2 Nc6",
     "d4 d5 c4 c6 Nf3 Nf6 Nc3 e6 e3 Nbd7 Bd3 dxc4 Bxc4 b5 Bd3 a6 O-O",
+    "d4 d5 c4 c6 Nf3 Nf6 Nc3 e6 Bg5 h6 Bh4 dxc4 e4 g5 Bg3 b5 Be2 Bb7",
     "d4 d5 c4 c6? cxd5 cxd5 Nc3 Nf6 Bf4 Nc6 e3 a6",
     "d4 d5 c4 c6? Nc3 Nf6 e3 e6 Nf3",
 
     // Tarrasch defense
     "d4 d5 c4 e6 Nc3 c5 cxd5 exd5 Nf3 Nc6 g3 Nf6 Bg2 Be7 O-O O-O Bg5 cxd4 Nxd4 h6",
 
-    // Buddapest defense
+    // Budapest defense
     "d4 Nf6 c4 e5 dxe5 Ng4 Nf3 Bc5 e3 Nc6 Be2 Ngxe5 O-O d6",
 
     // Sicilian
@@ -351,15 +353,19 @@ Book::bookLines[] = {
     "e4 c5 Nf3 e6 d4 cxd4 Nxd4 a6 Bd3 Nf6 O-O Qc7 Qe2 d6 c4 g6 Nc3 Bg7 Rd1 O-O",
     "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nf6 Nc3 d6 Be2 a6 O-O Be7 f4 O-O",
     "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6 Nc3 Qc7 Be3 a6 Bd3 Nf6 O-O Ne5 h3 Bc5 Qe2 d6",
+    "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6 Nc3 Qc7 f4 a6 Be2 b5",
     "e4 c5 Nf3 e6? Nc3 Nc6 d4 cxd4 Nxd4 Qc7 Be3 a6 Qd2 Nf6 O-O-O Be7",
     "e4 c5 Nc3 Nc6 Nge2 g6 d4 cxd4 Nxd4 Bg7 Be3 Nf6 Bc4 O-O Bb3 d6",
     "e4 c5 Nc3 Nc6 f4 d6 Nf3 g6 Bb5 Bd7 O-O Bg7 d3 a6 Bc4 Na5 e5 Nxc4 dxc4 Be6",
     "e4 c5 Nc3? Nc6 g3 g6 Bg2 Bg7 d3 d6 f4 e6 Nf3 Nge7 O-O O-O",
     "e4 c5 Nc3? e6 Nf3 Nc6 d4 cxd4 Nxd4 Qc7 Be2 a6 O-O Nf6 Be3 Bb4",
+    "e4 c5 Nc3? e6? g3? Nc6 Bg2 Nf6",
     "e4 c5 Nc3? a6 Nf3 d6 d4 cxd4 Nxd4 Nf6",
+    "e4 c5 Nc3? d6 f4 g6 Nf3 Bg7 Bc4 Nc6 O-O Nf6",
     "Nc3? c5 Nf3 Nc6 d4 cxd4 Nxd4 Nf6 e4 d6 Bg5 e6 Qd2 a6 O-O-O Bd7 f4 b5",
     "e4 c5 d4 cxd4 c3 dxc3 Nxc3 Nc6 Nf3 d6 Bc4 e6 O-O Nf6 Qe2 Be7 Rd1 e5",
     "e4 c5 c3 d5 exd5 Qxd5 d4 Nf6 Nf3 Bg4 Be2 e6 O-O Nc6 Be3 cxd4 cxd4 Be7",
+    "e4 c5 c3? Nf6 e5 Nd5 Nf3 Nc6 Bc4 Nb6 Bb3 c4 Bc2 Qc7 Qe2 g5",
     "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be3 Bg7 f3 O-O Qd2 Nc6 Bc4 Bd7 O-O-O Rc8 Bb3 Ne5 h4 Nc4 Bxc4 Rxc4 g4 Qa5",
 
     // French defense
@@ -372,8 +378,10 @@ Book::bookLines[] = {
     "e4 e6 d4 d5 Nc3 Nf6 Bg5 Be7 e5 Nfd7 Bxe7",
     "e4 e6 d4 d5 Nd2 Nf6 e5 Nfd7 Bd3 c5 c3 Nc6 Ne2 cxd4 cxd4 f6 exf6 Nxf6",
     "e4 e6? d4 d5 Nc3 Nf6 e5 Nfd7 f4 c5 Nf3 Nc6 Be3 cxd4 Nxd4 Bc5 Qd2 O-O O-O-O a6",
-    "e4 e6? d4 d5 Nc3 Bb4 e5 c5 a3 Bxc3 bxc3 Ne7 Qg4 Qc7 Qxg7 Rg8 Qxh7 cxd4 Ne2 Nbc6 f4 Bd7",
+    "e4 e6? d4 d5 Nc3 Bb4 e5 c5 a3 Bxc3 bxc3 Ne7? Qg4 Qc7 Qxg7 Rg8 Qxh7 cxd4 Ne2 Nbc6 f4 Bd7",
+    "e4 e6? d4 d5 Nc3 Bb4 e5 c5 a3 Bxc3 bxc3 Qc7 Qg4 f6 f4 f5 Qg3 cxd4 cxd4 Ne7 c3 b6",
     "e4 e6? d4 d5 Nc3 Bb4 e5 c5 Qg4",
+    "e4 e6? d4 d5 Nc3 Bb4 e5 c5 Nf3 Ne7 a3",
     "e4 e6? d4 c5? d5 exd5 exd5 d6",
     "e4 e6 d3 d5 Nd2 c5 Ngf3 Nc6 g3 Nf6 Bg2 Be7 O-O O-O",
 
@@ -382,6 +390,7 @@ Book::bookLines[] = {
     "e4 c6 d4 d5 Nd2 dxe4 Nxe4",
     "e4 c6 d4 d5 exd5 cxd5 c4 Nf6 Nc3 e6 Nf3 Be7",
     "e4 c6 d4 d5 e5 Bf5 Nf3 e6 Be2 c5 O-O Nc6 c3 cxd4 cxd4 Nge7 Nc3 Nc8 Be3 Nb6 Rc1 Be7",
+    "e4 c6? d4 d5 e5 Bf5 Nf3 e6 Be2 c5 Be3 Qb6 Nc3 Nc6",
     "e4 c6? d3 d5 Nd2 e5 Ngf3 Bd6 g3 Nf6 Bg2 O-O O-O",
     "e4 c6? d4 d5 Nc3 dxe4 Nxe4 Bf5 Ng3 Bg6 Nf3 Nd7 h4 h6 h5 Bh7 Bd3 Bxd3 Qxd3 e6",
 
@@ -410,10 +419,11 @@ Book::bookLines[] = {
     "d4 e6 c4 Nf6 Nc3 Bb4 Bg5 h6 Bh4 c5 d5 d6",
     "c4 e6 d4 Nf6 Nc3 Bb4 a3 Bxc3+ bxc3 c5 f3 d5",
     "d4 Nf6 c4 e6 Nc3 Bb4 Qc2 d5 a3 Bxc3+ Qxc3 Ne4 Qc2 Nc6 e3 e5",
+    "d4 Nf6 c4 e6 Nc3 Bb4 Qc2 O-O a3 Bxc3+ Qxc3 b6 Bg5 Bb7 e3 d6",
     "d4 Nf6 c4 e6 Nc3 Bb4 Nf3 O-O Bg5 c5 Rc1 cxd4",
-    "d4 Nf6 c4 e6 Nc3 Bb4 f3 d5",
+    "d4 Nf6 c4 e6 Nc3 Bb4 f3 d5 a3 Bxc3+ bxc3 c5",
     "d4 Nf6 c4 e6 Nc3 Bb4 e3 c5 Bd3 d5 Nf3 O-O O-O Nc6",
-    "d4 Nf6 c4 e6 Nc3 Bb4 e3 O-O Bd3 d5 Nf3 c5 O-O",
+    "d4 Nf6 c4 e6? Nc3 Bb4 e3 O-O Bd3 d5 Nf3 c5 O-O",
     "c4 Nf6 Nc3 e6 d4",
 
     // Benoni
@@ -457,6 +467,7 @@ Book::bookLines[] = {
     "e4 d6 d4 Nf6 Nc3 g6 Nf3 Bg7",
     "e4 d6? d4 g6 Nc3 Bg7 Nf3 Nf6",
     "d4 d6? e4 Nf6 Nc3 g6 Be3 Bg7 Qd2 c6",
+    "e4 d6? d4 g6 c4 Bg7",
     "d4 g6 e4 Bg7 Nf3 d6 Nc3 Nf6 Be2 O-O O-O c6 h3 Qc7 Bf4 Nbd7 e5 dxe5 Nxe5 Nxe5 Bxe5 Qb6",
     "d4 g6 c4 Bg7 Nc3 d6 e4 Nf6 Nf3 O-O Be2 e5 O-O",
     "d4 g6? e4 Bg7 c4 d6 Nc3 Nc6 Be3 e5 d5 Nce7",

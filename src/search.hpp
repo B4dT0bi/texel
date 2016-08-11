@@ -49,7 +49,7 @@ private:
     Position pos;
     Evaluate eval;
     KillerTable kt;
-    History ht;
+    History& ht;
     std::vector<U64> posHashList; // List of hashes for previous positions up to the last "zeroing" move.
     int posHashListSize;          // Number of used entries in posHashList
     int posHashFirstNew;          // First entry in posHashList that has not been played OTB.
@@ -97,7 +97,7 @@ private:
 
 public:
     Search(const Position& pos, const std::vector<U64>& posHashList,
-           int posHashListSize, TranspositionTable& tt);
+           int posHashListSize, TranspositionTable& tt, History& ht);
 
     void init(const Position& pos0, const std::vector<U64>& posHashList0,
               int posHashListSize0);
@@ -230,8 +230,6 @@ private:
      */
     int quiesce(int alpha, int beta, int ply, int depth, const bool inCheck);
 
-    int captures[64];   // Value of captured pieces
-
     /**
      * Static exchange evaluation function.
      * @return SEE score for m. Positive value is good for the side that makes the first move.
@@ -247,10 +245,19 @@ private:
         }
     }
 
-    /**
-     * Find move with highest score and move it to the front of the list.
-     */
-    static void selectBest(MoveGen::MoveList& moves, int startIdx);
+    /** Find move with highest score and move it to the front of the list. */
+    static void selectBest(MoveGen::MoveList& moves, int startIdx) {
+        int bestIdx = startIdx;
+        int bestScore = moves[bestIdx].score();
+        for (int i = startIdx + 1; i < moves.size; i++) {
+            int sc = moves[i].score();
+            if (sc > bestScore) {
+                bestIdx = i;
+                bestScore = sc;
+            }
+        }
+        std::swap(moves[bestIdx], moves[startIdx]);
+    }
 
     /** If hashMove exists in the move list, move the hash move to the front of the list. */
     static bool selectHashMove(MoveGen::MoveList& moves, const Move& hashMove);

@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@
 #include <iostream>
 
 S64 currentTimeMillis() {
-    auto t = std::chrono::system_clock::now();
+    auto t = std::chrono::high_resolution_clock::now();
     auto t0 = t.time_since_epoch();
     auto x = t0.count();
     typedef decltype(t0) T0Type;

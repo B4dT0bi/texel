@@ -31,8 +31,6 @@
 #include <iostream>
 #include <iomanip>
 
-// FIXME!! Searching for hash keys is much faster in java version.
-
 #ifdef TREELOG
 void
 TreeLoggerWriter::writeHeader(const Position& pos) {
@@ -63,15 +61,61 @@ TreeLoggerReader::computeForwardPointers() {
     std::cout << "Computing forward pointers..." << std::endl;
     StartEntry se;
     EndEntry ee;
+    const size_t batchSize = 1000000;
+    std::vector<std::pair<S64,int> > toWrite;
+    toWrite.reserve(batchSize);
     for (int i = 0; i < numEntries; i++) {
         bool isStart = readEntry(i, se, ee);
         if (!isStart) {
-            int offs = indexToFileOffs(ee.startIndex);
-            writeInt(offs, 4, i);
+            S64 offs = indexToFileOffs(ee.startIndex);
+            toWrite.push_back(std::make_pair(offs, i));
+            if (toWrite.size() >= batchSize) {
+                flushForwardPointerData(toWrite);
+                toWrite.clear();
+                toWrite.reserve(batchSize);
+            }
         }
     }
+    flushForwardPointerData(toWrite);
     writeInt(127, 1, 1 << 7);
+    fs.flush();
     std::cout << "Computing forward pointers... done" << std::endl;
+}
+
+void
+TreeLoggerReader::flushForwardPointerData(std::vector<std::pair<S64,int> >& toWrite) {
+    if (toWrite.empty())
+        return;
+    std::sort(toWrite.begin(), toWrite.end());
+    const S64 bufSize = 4096;
+    unsigned char buf[bufSize];
+    S64 bufStart = -1;
+    for (size_t i = 0; i < toWrite.size(); i++) {
+        S64 offs = toWrite[i].first;
+        int val = toWrite[i].second;
+        if ((bufStart >= 0) && ((offs < bufStart) || (offs + 4 > bufStart + bufSize))) { // flush
+            int writeSize = std::min(bufSize, fileLen - bufStart);
+            fs.seekp(bufStart, std::ios_base::beg);
+            fs.write((const char*)buf, writeSize);
+            bufStart = -1;
+        }
+        if (bufStart == -1) {
+            bufStart = offs;
+            int readSize = std::min(bufSize, fileLen - bufStart);
+            fs.seekg(bufStart, std::ios_base::beg);
+            fs.read((char*)buf, readSize);
+        }
+        for (int i = 0; i < 4; i++) {
+            buf[offs-bufStart+3-i] = val & 0xff;
+            val >>= 8;
+        }
+    }
+    if (bufStart >= 0) { // flush
+        int writeSize = std::min(bufSize, fileLen - bufStart);
+        fs.seekp(bufStart, std::ios_base::beg);
+        fs.write((const char*)buf, writeSize);
+    }
+    filePos = -1;
 }
 
 std::string
@@ -79,6 +123,7 @@ TreeLoggerReader::getRootNodeFEN() {
     char buf[128];
     fs.seekg(0, std::ios_base::beg);
     fs.read(buf, sizeof(buf));
+    filePos = sizeof(buf);
     int len = buf[0];
     std::string ret(&buf[1], len);
     return ret;
@@ -86,9 +131,11 @@ TreeLoggerReader::getRootNodeFEN() {
 
 bool
 TreeLoggerReader::readEntry(int index, StartEntry& se, EndEntry& ee) {
-    int offs = indexToFileOffs(index);
-    fs.seekg(offs, std::ios_base::beg);
-    fs.read((char*)entryBuffer, 16);
+    S64 offs = indexToFileOffs(index);
+    if (offs != filePos)
+        fs.seekg(offs, std::ios_base::beg);
+    fs.read((char*)entryBuffer, sizeof(entryBuffer));
+    filePos = offs + sizeof(entryBuffer);
     int otherIndex = getInt(0, 4);
     bool isStartEntry = (otherIndex == -1) || (otherIndex > index);
     if (isStartEntry) {
@@ -110,6 +157,19 @@ TreeLoggerReader::readEntry(int index, StartEntry& se, EndEntry& ee) {
     return isStartEntry;
 }
 
+static bool isNoMove(const Move& m) {
+    return (m.from() == 1) && (m.to() == 1);
+}
+
+std::string moveToStr(const Move& m) {
+    if (m.isEmpty())
+        return "null";
+    else if (isNoMove(m))
+        return "----";
+    else
+        return TextIO::moveToUCIString(m);
+}
+
 void
 TreeLoggerReader::mainLoop(Position rootPos) {
     int currIndex = -1;
@@ -122,7 +182,7 @@ TreeLoggerReader::mainLoop(Position rootPos) {
             getMoveSequence(currIndex, moves);
             for (size_t i = 0; i < moves.size(); i++) {
                 const Move& m = moves[i];
-                std::cout << " " << TextIO::moveToUCIString(m);
+                std::cout << " " << moveToStr(m);
             }
             std::cout << std::endl;
             printNodeInfo(rootPos, currIndex);
@@ -161,7 +221,7 @@ TreeLoggerReader::mainLoop(Position rootPos) {
             std::vector<int> found;
             for (size_t i = 0; i < children.size(); i++) {
                 readEntries(children[i], se, ee);
-                if (TextIO::moveToUCIString(se.move) == m)
+                if (moveToStr(se.move) == m)
                     found.push_back(children[i]);
             }
             if (found.empty()) {
@@ -180,11 +240,41 @@ TreeLoggerReader::mainLoop(Position rootPos) {
             for (int i = 0; i < n; i++)
                 currIndex = findParent(currIndex);
         } else if (startsWith(cmdStr, "l")) {
+            bool onlyBest = startsWith(cmdStr, "lb");
             std::vector<int> children;
             findChildren(currIndex, children);
             std::string m = getArgStr(cmdStr, "");
-            for (size_t i = 0; i < children.size(); i++)
-                printNodeInfo(rootPos, children[i], m);
+            if (onlyBest) {
+                int bestDepth = -1;
+                int bestScore = std::numeric_limits<int>::min();
+                for (size_t i = 0; i < children.size(); i++) {
+                    StartEntry se;
+                    EndEntry ee;
+                    bool haveEE = readEntries(children[i], se, ee);
+                    if (!haveEE || (ee.scoreType == TType::T_GE) || isNoMove(se.move))
+                        continue;
+                    int d = se.depth;
+                    if ((ee.scoreType == TType::T_EXACT) && (ee.score > se.beta))
+                        continue;
+                    if ((d > bestDepth) || ((d == bestDepth) && (-ee.score > bestScore))) {
+                        if ((currIndex >= 0) && (i+1 < children.size())) {
+                            StartEntry se2;
+                            EndEntry ee2;
+                            bool haveEE2 = readEntries(children[i+1], se2, ee2);
+                            if (haveEE2 && (se2.depth == d) && (se2.move == se.move) &&
+                                ((ee2.scoreType == TType::T_GE) ||
+                                 ((ee2.scoreType == TType::T_EXACT) && (ee2.score == ee.score))))
+                                continue;
+                        }
+                        printNodeInfo(rootPos, children[i], m);
+                        bestDepth = d;
+                        bestScore = -ee.score;
+                    }
+                }
+            } else {
+                for (size_t i = 0; i < children.size(); i++)
+                    printNodeInfo(rootPos, children[i], m);
+            }
             doPrint = false;
         } else if (startsWith(cmdStr, "n")) {
             std::vector<int> nodes;
@@ -208,14 +298,15 @@ TreeLoggerReader::mainLoop(Position rootPos) {
             std::vector<Move> moves;
             getMoveSequence(currIndex, moves);
             for (size_t i = 0; i < moves.size(); i++)
-                std::cout << ' ' << TextIO::moveToUCIString(moves[i]);
+                std::cout << ' ' << moveToStr(moves[i]);
             std::cout << std::endl;
             doPrint = false;
         } else if (startsWith(cmdStr, "h")) {
+            bool onlyPrev = startsWith(cmdStr, "hp");
             U64 hashKey = getPosition(rootPos, currIndex).historyHash();
             hashKey = getHashKey(cmdStr, hashKey);
             std::vector<int> nodes;
-            getNodeForHashKey(hashKey, nodes);
+            getNodesForHashKey(hashKey, nodes, onlyPrev ? currIndex+1 : numEntries);
             for (size_t i = 0; i < nodes.size(); i++)
                 printNodeInfo(rootPos, nodes[i]);
             doPrint = false;
@@ -248,11 +339,11 @@ TreeLoggerReader::isMove(std::string cmdStr) const {
 }
 
 void
-TreeLoggerReader::getNodeForHashKey(U64 hashKey, std::vector<int>& nodes) {
+TreeLoggerReader::getNodesForHashKey(U64 hashKey, std::vector<int>& nodes, int maxEntry) {
     hashKey &= 0x0000ffffffffffffULL;
     StartEntry se;
     EndEntry ee;
-    for (int index = 0; index < numEntries; index++) {
+    for (int index = 0; index < maxEntry; index++) {
         bool isStart = readEntry(index, se, ee);
         if (!isStart) {
             if (ee.hashKey == hashKey) {
@@ -320,7 +411,8 @@ TreeLoggerReader::printHelp() {
     std::cout << "  d [n1 [n2...]] - Go to child \"n\"" << std::endl;
     std::cout << "  move           - Go to child \"move\", if unique" << std::endl;
     std::cout << "  u [levels]     - Move up" << std::endl;
-    std::cout << "  h [key]        - Find nodes with current (or given) hash key" << std::endl;
+    std::cout << "  h [key]        - Find nodes with current or given hash key" << std::endl;
+    std::cout << "  hp [key]       - Find nodes with current or given hash key before current node" << std::endl;
     std::cout << "  num            - Go to node \"num\"" << std::endl;
     std::cout << "  q              - Quit" << std::endl;
     std::cout << "  ?              - Print this help" << std::endl;
@@ -412,7 +504,8 @@ TreeLoggerReader::getPosition(const Position& rootPos, int index) {
     Position ret(rootPos);
     UndoInfo ui;
     for (size_t i = 0; i < moves.size(); i++)
-        ret.makeMove(moves[i], ui);
+        if (!isNoMove(moves[i]))
+            ret.makeMove(moves[i], ui);
     return ret;
 }
 
@@ -429,7 +522,7 @@ TreeLoggerReader::printNodeInfo(const Position& rootPos, int index, const std::s
         StartEntry se;
         EndEntry ee;
         bool haveEE = readEntries(index, se, ee);
-        std::string m = TextIO::moveToUCIString(se.move);
+        std::string m = moveToStr(se.move);
         if ((filterMove.length() > 0) && (m != filterMove))
             return;
         std::cout << std::setw(3) << getChildNo(index)

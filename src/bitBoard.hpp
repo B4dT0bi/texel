@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -27,6 +27,7 @@
 #define BITBOARD_HPP_
 
 #include "util.hpp"
+#include "alignedAlloc.hpp"
 
 class BitBoard {
 public:
@@ -99,11 +100,24 @@ public:
     }
 
     static int numberOfTrailingZeros(U64 mask) {
+#ifdef HAVE_CTZ
+        if (sizeof(U64) == sizeof(long))
+            return __builtin_ctzl(mask);
+        else if (sizeof(U64) == sizeof(long long))
+            return __builtin_ctzll(mask);
+#endif
         return trailingZ[(int)(((mask & -mask) * 0x07EDD5E59A4E28C2ULL) >> 58)];
     }
 
     /** Return number of 1 bits in mask. */
     static int bitCount(U64 mask) {
+#ifdef HAVE_POPCNT
+        if (sizeof(U64) == sizeof(long))
+            return __builtin_popcountl(mask);
+        else if (sizeof(U64) == sizeof(long long))
+            return __builtin_popcountl(mask >> 32) +
+                   __builtin_popcountl(mask & 0xffffffffULL);
+#endif
         const U64 k1 = 0x5555555555555555ULL;
         const U64 k2 = 0x3333333333333333ULL;
         const U64 k4 = 0x0f0f0f0f0f0f0f0fULL;
@@ -129,6 +143,8 @@ private:
     static U64 bMasks[64];
     static const int bBits[64];
     static const U64 bMagics[64];
+
+    static vector_aligned<U64> tableData;
 
     static const byte dirTable[];
     static const byte distTable[];

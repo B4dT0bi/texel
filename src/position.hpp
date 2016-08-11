@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -32,6 +32,7 @@
 #include "undoInfo.hpp"
 #include "bitBoard.hpp"
 #include "piece.hpp"
+#include "material.hpp"
 #include <algorithm>
 #include <iostream>
 
@@ -69,6 +70,7 @@ private:
 
     U64 hashKey;           // Cached Zobrist hash key
     U64 pHashKey;          // Cached Zobrist pawn hash key
+    MatId matId;           // Cached material identifier
 
 public:
     /** Bit definitions for the castleMask bit mask. */
@@ -97,11 +99,9 @@ public:
             return false;
         if (pHashKey != other.pHashKey)
             return false;
+        if (matId() != other.matId())
+            return false;
         return true;
-    }
-
-    int hashCode() const {
-        return (int)hashKey;
     }
 
     /**
@@ -124,6 +124,11 @@ public:
         if (halfMoveClock >= 80)
             ret ^= moveCntKeys[std::min(halfMoveClock, 100)];
         return ret;
+    }
+
+    /** Return the material identifier. */
+    int materialId() const {
+        return matId();
     }
 
     /**
@@ -230,109 +235,7 @@ public:
 
 public:
     /** Apply a move to the current position. */
-    void makeMove(const Move& move, UndoInfo& ui) {
-        ui.capturedPiece = squares[move.to()];
-        ui.castleMask = castleMask;
-        ui.epSquare = epSquare;
-        ui.halfMoveClock = halfMoveClock;
-        bool wtm = whiteMove;
-
-        const int p = squares[move.from()];
-        int capP = squares[move.to()];
-        U64 fromMask = 1ULL << move.from();
-
-        int prevEpSquare = epSquare;
-        setEpSquare(-1);
-
-        if ((capP != Piece::EMPTY) || (((pieceTypeBB[Piece::WPAWN] | pieceTypeBB[Piece::BPAWN]) & fromMask) != 0)) {
-            halfMoveClock = 0;
-
-            // Handle en passant and epSquare
-            if (p == Piece::WPAWN) {
-                if (move.to() - move.from() == 2 * 8) {
-                    int x = getX(move.to());
-                    if (BitBoard::epMaskW[x] & pieceTypeBB[Piece::BPAWN])
-                        setEpSquare(move.from() + 8);
-                } else if (move.to() == prevEpSquare) {
-                    setPiece(move.to() - 8, Piece::EMPTY);
-                }
-            } else if (p == Piece::BPAWN) {
-                if (move.to() - move.from() == -2 * 8) {
-                    int x = getX(move.to());
-                    if (BitBoard::epMaskB[x] & pieceTypeBB[Piece::WPAWN])
-                        setEpSquare(move.from() - 8);
-                } else if (move.to() == prevEpSquare) {
-                    setPiece(move.to() + 8, Piece::EMPTY);
-                }
-            }
-
-            if (((pieceTypeBB[Piece::WKING] | pieceTypeBB[Piece::BKING]) & fromMask) != 0) {
-                if (wtm) {
-                    setCastleMask(castleMask & ~(1 << A1_CASTLE));
-                    setCastleMask(castleMask & ~(1 << H1_CASTLE));
-                } else {
-                    setCastleMask(castleMask & ~(1 << A8_CASTLE));
-                    setCastleMask(castleMask & ~(1 << H8_CASTLE));
-                }
-            }
-
-            // Perform move
-            setPiece(move.from(), Piece::EMPTY);
-            // Handle promotion
-            if (move.promoteTo() != Piece::EMPTY) {
-                setPiece(move.to(), move.promoteTo());
-            } else {
-                setPiece(move.to(), p);
-            }
-        } else {
-            halfMoveClock++;
-
-            // Handle castling
-            if (((pieceTypeBB[Piece::WKING] | pieceTypeBB[Piece::BKING]) & fromMask) != 0) {
-                int k0 = move.from();
-                if (move.to() == k0 + 2) { // O-O
-                    movePieceNotPawn(k0 + 3, k0 + 1);
-                } else if (move.to() == k0 - 2) { // O-O-O
-                    movePieceNotPawn(k0 - 4, k0 - 1);
-                }
-                if (wtm) {
-                    setCastleMask(castleMask & ~(1 << A1_CASTLE));
-                    setCastleMask(castleMask & ~(1 << H1_CASTLE));
-                } else {
-                    setCastleMask(castleMask & ~(1 << A8_CASTLE));
-                    setCastleMask(castleMask & ~(1 << H8_CASTLE));
-                }
-            }
-
-            // Perform move
-            movePieceNotPawn(move.from(), move.to());
-        }
-        if (wtm) {
-            // Update castling rights when rook moves
-            if ((BitBoard::maskCorners & fromMask) != 0) {
-                if (p == Piece::WROOK)
-                    removeCastleRights(move.from());
-            }
-            if ((BitBoard::maskCorners & (1ULL << move.to())) != 0) {
-                if (capP == Piece::BROOK)
-                    removeCastleRights(move.to());
-            }
-        } else {
-            fullMoveCounter++;
-            // Update castling rights when rook moves
-            if ((BitBoard::maskCorners & fromMask) != 0) {
-                if (p == Piece::BROOK)
-                    removeCastleRights(move.from());
-            }
-            if ((BitBoard::maskCorners & (1ULL << move.to())) != 0) {
-                if (capP == Piece::WROOK)
-                    removeCastleRights(move.to());
-            }
-        }
-
-        hashKey ^= whiteHashKey;
-        whiteMove = !wtm;
-    }
+    void makeMove(const Move& move, UndoInfo& ui);
 
     void unMakeMove(const Move& move, UndoInfo& ui) {
         hashKey ^= whiteHashKey;

@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@ static StaticInitializer<ComputerPlayer> cpInit;
 
 void
 ComputerPlayer::staticInitialize() {
-    std::string name = "Texel 1.01";
+    std::string name = "Texel 1.02";
     if (sizeof(char*) == 4)
         name += " 32-bit";
     if (sizeof(char*) == 8)
@@ -43,6 +43,18 @@ ComputerPlayer::staticInitialize() {
     engineName = name;
 }
 
+ComputerPlayer::ComputerPlayer()
+    : tt(15),
+      book(verbose)
+{
+    minTimeMillis = 10000;
+    maxTimeMillis = 10000;
+    maxDepth = 100;
+    maxNodes = -1;
+    verbose = true;
+    bookEnabled = true;
+    currentSearch = NULL;
+}
 
 std::string
 ComputerPlayer::getCommand(const Position& posIn, bool drawOffer, const std::vector<Position>& history) {
@@ -53,7 +65,8 @@ ComputerPlayer::getCommand(const Position& posIn, bool drawOffer, const std::vec
         posHashList[posHashListSize++] = history[i].zobristHash();
     tt.nextGeneration();
     Position pos(posIn);
-    Search sc(pos, posHashList, posHashListSize, tt);
+    History ht;
+    Search sc(pos, posHashList, posHashListSize, tt, ht);
 
     // Determine all legal moves
     MoveGen::MoveList moves;
@@ -123,12 +136,21 @@ ComputerPlayer::canClaimDraw(Position& pos, std::vector<U64>& posHashList,
     return drawStr;
 }
 
+void
+ComputerPlayer::timeLimit(int minTimeLimit, int maxTimeLimit) {
+    minTimeMillis = minTimeLimit;
+    maxTimeMillis = maxTimeLimit;
+    if (currentSearch != NULL)
+        currentSearch->timeLimit(minTimeLimit, maxTimeLimit);
+}
+
 std::pair<Move, std::string>
 ComputerPlayer::searchPosition(Position& pos, int maxTimeMillis) {
     // Create a search object
     std::vector<U64> posHashList(200);
     tt.nextGeneration();
-    Search sc(pos, posHashList, 0, tt);
+    History ht;
+    Search sc(pos, posHashList, 0, tt, ht);
 
     // Determine all legal moves
     MoveGen::MoveList moves;

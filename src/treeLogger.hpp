@@ -205,10 +205,12 @@ public:
 #endif
 
 /**
- * Reader/analysis class for logging a search tree to file.
+ * Reader/analysis class for a search tree dumped to a file.
  */
 class TreeLoggerReader : public TreeLoggerBase {
     std::fstream fs;
+    S64 filePos;
+    S64 fileLen;
     int numEntries;
 
 public:
@@ -217,11 +219,12 @@ public:
         : fs(filename.c_str(), std::ios_base::out |
                                std::ios_base::in |
                                std::ios_base::binary),
-          numEntries(0)
+          filePos(-1), fileLen(0), numEntries(0)
     {
+        fs.exceptions(std::ifstream::failbit | std::ifstream::badbit);
         fs.seekg(0, std::ios_base::end);
-        U64 len = fs.tellg();
-        numEntries = (int) ((len - 128) / 16);
+        fileLen = fs.tellg();
+        numEntries = (int) ((fileLen - 128) / 16);
         computeForwardPointers();
     }
 
@@ -234,24 +237,29 @@ public:
 
 private:
 
-    static int indexToFileOffs(int index) {
-        return 128 + index * 16;
+    static S64 indexToFileOffs(int index) {
+        return 128 + 16 * (S64)index;
     }
 
     void writeInt(std::streamoff pos, int nBytes, U64 value) {
         fs.seekp(pos, std::ios_base::beg);
         putInt(0, nBytes, value);
         fs.write((const char*)entryBuffer, nBytes);
+        filePos = -1;
     }
 
     U64 readInt(std::streamoff pos, int nBytes) {
         fs.seekg(pos, std::ios_base::beg);
         fs.read((char*)entryBuffer, nBytes);
+        filePos = -1;
         return getInt(0, nBytes);
     }
 
     /** Compute endIndex for all StartNode entries. */
     void computeForwardPointers();
+
+    /** Write forward pointer data to disk. */
+    void flushForwardPointerData(std::vector<std::pair<S64,int> >& toWrite);
 
     /** Get FEN string for root node position. */
     std::string getRootNodeFEN();
@@ -266,7 +274,7 @@ private:
     bool isMove(std::string cmdStr) const;
 
     /** Return all nodes with a given hash key. */
-    void getNodeForHashKey(U64 hashKey, std::vector<int>& nodes);
+    void getNodesForHashKey(U64 hashKey, std::vector<int>& nodes, int maxEntry);
 
     /** Get hash key from an input string. */
     U64 getHashKey(std::string& s, U64 defKey) const;

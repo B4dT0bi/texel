@@ -139,6 +139,7 @@ void
 EngineControl::newGame() {
     randomSeed = Random().nextU64();
     tt.clear();
+    ht.init();
 }
 
 template <typename T>
@@ -177,28 +178,31 @@ EngineControl::computeTimeLimit(const SearchParams& sPar) {
         if (moves == 0)
             moves = 999;
         moves = std::min(moves, 45); // Assume 45 more moves until end of game
-        if (ponderMode) {
-            const double ponderHitRate = 0.35;
-            moves = (int)ceil(moves * (1 - ponderHitRate));
-        }
         bool white = pos.whiteMove;
         int time = white ? sPar.wTime : sPar.bTime;
         int inc  = white ? sPar.wInc : sPar.bInc;
         const int margin = std::min(1000, time * 9 / 10);
         int timeLimit = (time + inc * (moves - 1) - margin) / moves;
         minTimeLimit = (int)(timeLimit * 0.85);
+        if (ponderMode) {
+            const double ponderHitRate = 0.35;
+            minTimeLimit = (int)ceil(minTimeLimit / (1 - ponderHitRate));
+        }
         maxTimeLimit = (int)(minTimeLimit * clamp(moves * 0.5, 2.5, 4.0));
 
         // Leave at least 1s on the clock, but can't use negative time
         minTimeLimit = clamp(minTimeLimit, 1, time - margin);
         maxTimeLimit = clamp(maxTimeLimit, 1, time - margin);
+
+        // FIXME!! Reduce time if last N (three?) iterations found the same best move
+        // FIXME!! Stop search if minTimeLimit/N time (summed over all iterations) has been spent thinking about the currently best move.
+        // FIXME!! Stop search if minTimeLimit/N has been spent, and best move has accounted for more than x% of total thinking time.
     }
 }
 
 void
 EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int maxDepth, int maxNodes) {
-    sc = std::make_shared<Search>(pos, posHashList, posHashListSize, tt);
-    sc->timeLimit(minTimeLimit, maxTimeLimit);
+    sc = std::make_shared<Search>(pos, posHashList, posHashListSize, tt, ht);
     sc->setListener(std::make_shared<SearchListener>(os));
     sc->setStrength(strength, randomSeed);
     std::shared_ptr<MoveGen::MoveList> moves(std::make_shared<MoveGen::MoveList>());
@@ -209,10 +213,17 @@ EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int maxDepth, int
     onePossibleMove = false;
     if ((moves->size < 2) && !infinite) {
         onePossibleMove = true;
-        if (!ponder)
-            if ((maxDepth < 0) || (maxDepth > 2))
-                maxDepth = 2;
+        if (!ponder) {
+            if (maxTimeLimit > 0) {
+                maxTimeLimit = clamp(maxTimeLimit/100, 1, 100);
+                minTimeLimit = clamp(minTimeLimit/100, 1, 100);
+            } else {
+                if ((maxDepth < 0) || (maxDepth > 2))
+                    maxDepth = 2;
+            }
+        }
     }
+    sc->timeLimit(minTimeLimit, maxTimeLimit);
     tt.nextGeneration();
     auto f = [this,moves,maxDepth,maxNodes](void) {
         Move m;
@@ -276,7 +287,7 @@ EngineControl::setupTT() {
         try {
             logSize--;
             if (logSize <= 0)
-                break;;
+                break;
             tt.reSize(logSize);
             break;
         } catch (const std::bad_alloc& ex) {
@@ -358,7 +369,7 @@ EngineControl::moveToString(const Move& m) {
 
 void
 EngineControl::printOptions(std::ostream& os) {
-    os << "option name Hash type spin default 16 min 1 max 4096" << std::endl;
+    os << "option name Hash type spin default 16 min 1 max 524288" << std::endl;
     os << "option name OwnBook type check default false" << std::endl;
     os << "option name Ponder type check default true" << std::endl;
     os << "option name UCI_AnalyseMode type check default false" << std::endl;

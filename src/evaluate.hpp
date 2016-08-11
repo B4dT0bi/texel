@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -29,6 +29,7 @@
 #include "parameters.hpp"
 #include "piece.hpp"
 #include "position.hpp"
+#include "alignedAlloc.hpp"
 
 /**
  * Position evaluation routines.
@@ -88,6 +89,7 @@ public:
     static const int rookMobScore[];
     static const int bishMobScore[];
     static const int queenMobScore[];
+    static int knightMobScore[64][9];
 
 private:
     struct PawnHashData {
@@ -98,11 +100,15 @@ private:
         short passedBonusB;
         U64 passedPawnsW;     // The most advanced passed pawns for each file
         U64 passedPawnsB;
+        U64 outPostsW;        // Possible outpost squares for white
+        U64 outPostsB;
     };
     static std::vector<PawnHashData> pawnHash;
+    const PawnHashData* phd;
 
     static const ubyte kpkTable[2*32*64*48/8];
     static const ubyte krkpTable[2*32*48*8];
+    static const U64 krpkrTable[2*24*64];
 
     // King safety variables
     U64 wKingZone, bKingZone;       // Squares close to king that are worth attacking
@@ -112,12 +118,7 @@ private:
 
 public:
     /** Constructor. */
-    Evaluate()
-        : wKingZone(0), bKingZone(0),
-          wKingAttacks(0), bKingAttacks(0),
-          wAttacksBB(0), bAttacksBB(0),
-          wPawnAttacks(0), bPawnAttacks(0) {
-    }
+    Evaluate();
 
     /**
      * Static evaluation of a position.
@@ -141,6 +142,13 @@ public:
         }
     }
 
+    static const int IPOLMAX = 1024;
+
+    /** Compute v1 + (v2-v1)*k/IPOLMAX */
+    static int interpolate(int v1, int v2, int k) {
+        return v1 + (v2 - v1) * k / IPOLMAX;
+    }
+
     /** Compute white_material - black_material. */
     static int material(const Position& pos) {
         return pos.wMtrl - pos.bMtrl;
@@ -152,20 +160,37 @@ private:
     /** Compute score based on piece square tables. Positive values are good for white. */
     int pieceSquareEval(const Position& pos);
 
-    /** Implement the "when ahead trade pieces, when behind trade pawns" rule. */
-    int tradeBonus(const Position& pos) {
-        const int wM = pos.wMtrl;
-        const int bM = pos.bMtrl;
-        const int wPawn = pos.wMtrlPawns;
-        const int bPawn = pos.bMtrlPawns;
-        const int deltaScore = wM - bM;
+    struct MaterialHashData {
+        MaterialHashData() : id(-1), score(0) { }
+        int id;
+        int score;
+        short wPawnIPF, bPawnIPF;
+        short wKnightIPF, bKnightIPF;
+        short castleIPF;
+        short wPassedPawnIPF, bPassedPawnIPF;
+        short kingSafetyIPF;
+        short diffColorBishopIPF;
+        short wKnightOutPostIPF, bKnightOutPostIPF;
+    };
+    static std::vector<MaterialHashData> materialHash;
+    const MaterialHashData* mhd;
 
-        int pBonus = 0;
-        pBonus += interpolate((deltaScore > 0) ? wPawn : bPawn, 0, -30 * deltaScore / 100, 6 * pV, 0);
-        pBonus += interpolate((deltaScore > 0) ? bM : wM, 0, 30 * deltaScore / 100, qV + 2 * rV + 2 * bV + 2 * nV, 0);
-
-        return pBonus;
+    /** Get material score */
+    int materialScore(const Position& pos) {
+        int mId = pos.materialId();
+        int key = (mId >> 16) * 40507 + mId;
+        MaterialHashData& newMhd = materialHash[key & (materialHash.size() - 1)];
+        if (newMhd.id != mId)
+            computeMaterialScore(pos, newMhd);
+        mhd = &newMhd;
+        return newMhd.score;
     }
+
+    /** Compute material score. */
+    void computeMaterialScore(const Position& pos, MaterialHashData& mhd) const;
+
+    /** Implement the "when ahead trade pieces, when behind trade pawns" rule. */
+    int tradeBonus(const Position& pos) const;
 
     static int castleFactor[256];
 
@@ -183,6 +208,9 @@ private:
     /** Compute bishop evaluation. */
     int bishopEval(const Position& pos, int oldScore);
 
+    /** Compute knight evaluation. */
+    int knightEval(const Position& pos);
+
     int threatBonus(const Position& pos);
 
     /** Compute king safety for both kings. */
@@ -193,18 +221,20 @@ private:
         U64 key;
         int score;
     };
-    static std::vector<KingSafetyHashData> kingSafetyHash;
+    static vector_aligned<KingSafetyHashData> kingSafetyHash;
 
     int kingSafetyKPPart(const Position& pos);
 
     /** Implements special knowledge for some endgame situations. */
     int endGameEval(const Position& pos, int oldScore);
 
-    static int evalKQKP(int wKing, int wQueen, int bKing, int bPawn);
+    static int evalKQKP(int wKing, int wQueen, int bKing, int bPawn, bool whiteMove);
 
     static int kpkEval(int wKing, int bKing, int wPawn, bool whiteMove);
 
     static int krkpEval(int wKing, int bKing, int bPawn, bool whiteMove);
+
+    static int krpkrEval(int wKing, int bKing, int wPawn, int wRook, int bRook, bool whiteMove);
 };
 
 inline

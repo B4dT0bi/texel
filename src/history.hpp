@@ -43,15 +43,12 @@ private:
 
 public:
     History() {
-        for (int p = 0; p < Piece::nPieceTypes; p++) {
-            for (int sq = 0; sq < 64; sq++) {
-                Entry& e = ht[p][sq];
-                e.countSuccess = 0;
-                e.countFail = 0;
-                e.score = -1;
-            }
-        }
+        init();
     }
+
+    void init();
+
+    void reScale();
 
     /** Record move as a success. */
     void addSuccess(const Position& pos, const Move& m, int depth) {
@@ -59,7 +56,7 @@ public:
         int cnt = depth;
         Entry& e = ht[p][m.to()];
         int val = e.countSuccess + cnt;
-        if (val > 1000) {
+        if (val + e.countFail > 1300) {
             val /= 2;
             e.countFail /= 2;
         }
@@ -72,7 +69,12 @@ public:
         int p = pos.getPiece(m.from());
         int cnt = depth;
         Entry& e = ht[p][m.to()];
-        e.countFail += cnt;
+        int val = e.countFail + cnt;
+        if (val + e.countSuccess > 1300) {
+            val /= 2;
+            e.countSuccess /= 2;
+        }
+        e.countFail = val;
         e.score = -1;
     }
 

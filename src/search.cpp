@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2012-2013  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -37,8 +37,8 @@ using namespace SearchConst;
 const int UNKNOWN_SCORE = -32767; // Represents unknown static eval score
 
 Search::Search(const Position& pos0, const std::vector<U64>& posHashList0,
-               int posHashListSize0, TranspositionTable& tt0)
-    : tt(tt0)
+               int posHashListSize0, TranspositionTable& tt0, History& ht0)
+    : ht(ht0), tt(tt0)
 {
     init(pos0, posHashList0, posHashListSize0);
 }
@@ -101,15 +101,12 @@ Search::iterativeDeepening(const MoveGen::MoveList& scMovesIn,
         std::vector<bool> includedMoves(scMovesIn.size);
         U64 rndL = pos.zobristHash() ^ randomSeed;
         includedMoves[(int)(rndL % scMovesIn.size)] = true;
-        int nIncludedMoves = 1;
         double pIncl = (strength < 100) ? strength * strength * 1e-4 : 1.0;
         for (int mi = 0; mi < scMovesIn.size; mi++) {
             rndL = 6364136223846793005ULL * rndL + 1442695040888963407ULL;
             double rnd = ((rndL & 0x7fffffffffffffffULL) % 1000000000) / 1e9;
-            if (!includedMoves[mi] && (rnd < pIncl)) {
+            if (!includedMoves[mi] && (rnd < pIncl))
                 includedMoves[mi] = true;
-                nIncludedMoves++;
-            }
         }
         for (int mi = 0; mi < scMovesIn.size; mi++) {
             if (includedMoves[mi]) {
@@ -125,16 +122,16 @@ Search::iterativeDeepening(const MoveGen::MoveList& scMovesIn,
     bool firstIteration = true;
     Move bestMove = scMoves[0].move;
     this->verbose = verbose;
-    if ((maxDepth < 0) || (maxDepth > 100)) {
+    if ((maxDepth < 0) || (maxDepth > 100))
         maxDepth = 100;
-    }
     for (size_t i = 0; i < COUNT_OF(searchTreeInfo); i++)
         searchTreeInfo[i].allowNullMove = true;
+    ht.reScale();
     try {
     for (int depthS = plyScale; ; depthS += plyScale, firstIteration = false) {
         initNodeStats();
         if (listener) listener->notifyDepth(depthS/plyScale);
-        int aspirationDelta = (std::abs(bestScoreLastIter) <= MATE0 / 2) ? 20 : 1000;
+        int aspirationDelta = (std::abs(bestScoreLastIter) <= MATE0 / 2) ? 15 : 1000;
         int alpha = firstIteration ? -MATE0 : std::max(bestScoreLastIter - aspirationDelta, -MATE0);
         int bestScore = -MATE0;
         UndoInfo ui;
@@ -201,7 +198,7 @@ Search::iterativeDeepening(const MoveGen::MoveList& scMovesIn,
                 int retryDelta = aspirationDelta * 2;
                 while (score >= beta) {
                     beta = std::min(score + retryDelta, MATE0);
-                    retryDelta = MATE0 * 2;
+                    retryDelta = retryDelta * 3 / 2;
                     if (mi != 0)
                         needMoreTime = true;
                     bestMove = m;
@@ -225,10 +222,10 @@ Search::iterativeDeepening(const MoveGen::MoveList& scMovesIn,
                     pos.unMakeMove(m, ui);
                 }
             } else if ((mi == 0) && (score <= alpha)) {
-                int retryDelta = MATE0 * 2;
+                int retryDelta = aspirationDelta * 2;
                 while (score <= alpha) {
                     alpha = std::max(score - retryDelta, -MATE0);
-                    retryDelta = MATE0 * 2;
+                    retryDelta = retryDelta * 3 / 2;
                     needMoreTime = searchNeedMoreTime = true;
                     if (verbose) {
                         std::stringstream ss;
@@ -284,7 +281,7 @@ Search::iterativeDeepening(const MoveGen::MoveList& scMovesIn,
                     notifyPV(depthS/plyScale, score, false, false, m);
             }
             scMoves[mi].move.setScore(score);
-            scMoves[mi].nodes = nodesThisMove;
+            scMoves[mi].nodes += nodesThisMove;
             bestScore = std::max(bestScore, score);
             if (!firstIteration) {
                 if ((score > alpha) || (mi == 0)) {
@@ -408,11 +405,6 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
 
     // Draw tests
     if (canClaimDraw50(pos)) {
-        if (MoveGen::canTakeKing(pos)) {
-            int score = MATE0 - ply;
-            log.logNodeEnd(searchTreeInfo[ply].nodeIdx, score, TType::T_EXACT, UNKNOWN_SCORE, hKey);
-            return score;
-        }
         if (inCheck) {
             MoveGen::MoveList moves;
             MoveGen::pseudoLegalMoves(pos, moves);
@@ -443,21 +435,21 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
         evalScore = ent.evalScore;
         int plyToMate = MATE0 - std::abs(score);
         int eDepth = ent.getDepth();
+        ent.getMove(hashMove);
         if ((beta == alpha + 1) && ((eDepth >= depth) || (eDepth >= plyToMate*plyScale))) {
             if (     (ent.type == TType::T_EXACT) ||
                     ((ent.type == TType::T_GE) && (score >= beta)) ||
                     ((ent.type == TType::T_LE) && (score <= alpha))) {
                 if (score >= beta) {
-                    ent.getMove(hashMove);
                     if (!hashMove.isEmpty())
                         if (pos.getPiece(hashMove.to()) == Piece::EMPTY)
                             kt.addKiller(ply, hashMove);
                 }
+                sti.bestMove = hashMove;
                 log.logNodeEnd(sti.nodeIdx, score, ent.type, evalScore, hKey);
                 return score;
             }
         }
-        ent.getMove(hashMove);
     }
 
     int posExtend = inCheck ? plyScale : 0; // Check extension
@@ -465,6 +457,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
     // If out of depth, perform quiescence search
     if (depth + posExtend <= 0) {
         q0Eval = evalScore;
+        sti.bestMove.setMove(0,0,0,0);
         int score = quiesce(alpha, beta, ply, 0, inCheck);
         int type = TType::T_EXACT;
         if (score <= alpha) {
@@ -472,18 +465,19 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
         } else if (score >= beta) {
             type = TType::T_GE;
         }
-        emptyMove.setScore(score);
-        tt.insert(hKey, emptyMove, type, ply, depth, q0Eval);
+        sti.bestMove.setScore(score);
+        tt.insert(hKey, sti.bestMove, type, ply, depth, q0Eval);
         log.logNodeEnd(sti.nodeIdx, score, type, q0Eval, hKey);
         return score;
     }
 
     // Razoring
-    if ((std::abs(alpha) <= MATE0 / 2) && (depth < 4*plyScale) && (beta == alpha + 1)) {
+    const bool normalBound = (alpha >= -MATE0 / 2) && (beta <= MATE0 / 2);
+    if (normalBound && (depth < 4*plyScale) && (beta == alpha + 1)) {
         if (evalScore == UNKNOWN_SCORE) {
             evalScore = eval.evalPos(pos);
         }
-        const int razorMargin = 250;
+        const int razorMargin = (depth <= plyScale) ? 125 : 250;
         if (evalScore < beta - razorMargin) {
             q0Eval = evalScore;
             int score = quiesce(alpha-razorMargin, beta-razorMargin, ply, 0, inCheck);
@@ -497,8 +491,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
     }
 
     // Reverse futility pruning
-    if (!inCheck && (depth < 5*plyScale) && (posExtend == 0) &&
-        (std::abs(alpha) <= MATE0 / 2) && (std::abs(beta) <= MATE0 / 2)) {
+    if (!inCheck && (depth < 5*plyScale) && (posExtend == 0) && normalBound) {
         bool mtrlOk;
         if (pos.whiteMove) {
             mtrlOk = (pos.wMtrl > pos.wMtrlPawns) && (pos.wMtrlPawns > 0);
@@ -524,14 +517,10 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
 
     // Try null-move pruning
     // FIXME! Try null-move verification in late endgames. See loss in round 21.
+    // FIXME! Try double null-move to mitigate zugzwang problems.
     sti.currentMove = emptyMove;
     if (    (depth >= 3*plyScale) && !inCheck && sti.allowNullMove &&
             (std::abs(beta) <= MATE0 / 2)) {
-        if (MoveGen::canTakeKing(pos)) {
-            int score = MATE0 - ply;
-            log.logNodeEnd(sti.nodeIdx, score, TType::T_EXACT, evalScore, hKey);
-            return score;
-        }
         bool nullOk;
         if (pos.whiteMove) {
             nullOk = (pos.wMtrl > pos.wMtrlPawns) && (pos.wMtrlPawns > 0);
@@ -550,6 +539,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
             int epSquare = pos.getEpSquare();
             pos.setEpSquare(-1);
             searchTreeInfo[ply+1].allowNullMove = false;
+            searchTreeInfo[ply+1].bestMove.setMove(0,0,0,0);
             int score = -negaScout(-beta, -(beta - 1), ply + 1, depth - R, -1, false);
             searchTreeInfo[ply+1].allowNullMove = true;
             pos.setEpSquare(epSquare);
@@ -579,29 +569,38 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
 
     bool futilityPrune = false;
     int futilityScore = alpha;
-    if (!inCheck && (depth < 5*plyScale) && (posExtend == 0)) {
-        if ((std::abs(alpha) <= MATE0 / 2) && (std::abs(beta) <= MATE0 / 2)) {
-            int margin;
-            if (depth <= plyScale)        margin = 61;
-            else if (depth <= 2*plyScale) margin = 144;
-            else if (depth <= 3*plyScale) margin = 268;
-            else                          margin = 334;
-            if (evalScore == UNKNOWN_SCORE)
-                evalScore = eval.evalPos(pos);
-            futilityScore = evalScore + margin;
-            if (futilityScore <= alpha)
-                futilityPrune = true;
-        }
+    if (!inCheck && (depth < 5*plyScale) && (posExtend == 0) && normalBound) {
+        int margin;
+        if (depth <= plyScale)        margin = 61;
+        else if (depth <= 2*plyScale) margin = 144;
+        else if (depth <= 3*plyScale) margin = 268;
+        else                          margin = 334;
+        if (evalScore == UNKNOWN_SCORE)
+            evalScore = eval.evalPos(pos);
+        futilityScore = evalScore + margin;
+        if (futilityScore <= alpha)
+            futilityPrune = true;
     }
 
     if ((depth > 4*plyScale) && hashMove.isEmpty()) {
         bool isPv = beta > alpha + 1;
         if (isPv || (depth > 8 * plyScale)) {
             // No hash move. Try internal iterative deepening.
+#ifdef TREELOG
+            SearchTreeInfo& sti2 = searchTreeInfo[ply-1];
+            Move savedMove = sti2.currentMove;
+            S64 savedNodeIdx2 = sti2.nodeIdx;
+            sti2.currentMove = Move(1,1,0);
+            sti2.nodeIdx = sti.nodeIdx;
+#endif
             S64 savedNodeIdx = sti.nodeIdx;
             int newDepth = isPv ? depth  - 2 * plyScale : depth * 3 / 8;
             negaScout(alpha, beta, ply, newDepth, -1, inCheck);
             sti.nodeIdx = savedNodeIdx;
+#ifdef TREELOG
+            sti2.currentMove = savedMove;
+            sti2.nodeIdx = savedNodeIdx2;
+#endif
             tt.probe(hKey, ent);
             if (ent.type != TType::T_EMPTY)
                 ent.getMove(hashMove);
@@ -617,7 +616,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
         MoveGen::pseudoLegalMoves(pos, moves);
     bool seeDone = false;
     bool hashMoveSelected = true;
-    if (!selectHashMove(moves, hashMove)) {
+    if (hashMove.isEmpty() || !selectHashMove(moves, hashMove)) {
         scoreMoveList(moves, ply);
         seeDone = true;
         hashMoveSelected = false;
@@ -638,11 +637,6 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
         if ((mi > 0) || !hashMoveSelected)
             selectBest(moves, mi);
         Move& m = moves[mi];
-        if (pos.getPiece(m.to()) == (pos.whiteMove ? Piece::BKING : Piece::WKING)) {
-            int score = MATE0-ply;
-            log.logNodeEnd(sti.nodeIdx, score, TType::T_EXACT, evalScore, hKey);
-            return score;       // King capture
-        }
         int newCaptureSquare = -1;
         bool isCapture = (pos.getPiece(m.to()) != Piece::EMPTY);
         bool isPromotion = (m.promoteTo() != Piece::EMPTY);
@@ -652,15 +646,22 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
         bool givesCheck = MoveGen::givesCheck(pos, m);
         bool doFutility = false;
         if (mayReduce && haveLegalMoves && !givesCheck && !passedPawnPush(pos, m)) {
-            if ((std::abs(alpha) <= MATE0 / 2) && (std::abs(beta) <= MATE0 / 2)) {
-                int moveCountLimit;
-                if (depth <= plyScale)          moveCountLimit = 3;
-                else if (depth <= 2 * plyScale) moveCountLimit = 6;
-                else if (depth <= 3 * plyScale) moveCountLimit = 12;
-                else if (depth <= 4 * plyScale) moveCountLimit = 24;
-                else moveCountLimit = 256;
-                if (mi >= moveCountLimit)
-                    continue; // Late move pruning
+            if (normalBound && (bestScore >= -MATE0 / 2)) {
+                bool lmpOk;
+                if (pos.whiteMove)
+                    lmpOk = (pos.wMtrl > pos.wMtrlPawns) && (pos.wMtrlPawns > 0);
+                else
+                    lmpOk = (pos.bMtrl > pos.bMtrlPawns) && (pos.bMtrlPawns > 0);
+                if (lmpOk) {
+                    int moveCountLimit;
+                    if (depth <= plyScale)          moveCountLimit = 3;
+                    else if (depth <= 2 * plyScale) moveCountLimit = 6;
+                    else if (depth <= 3 * plyScale) moveCountLimit = 12;
+                    else if (depth <= 4 * plyScale) moveCountLimit = 24;
+                    else moveCountLimit = 256;
+                    if (mi >= moveCountLimit)
+                        continue; // Late move pruning
+                }
             }
             if (futilityPrune)
                 doFutility = true;
@@ -669,6 +670,8 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
         if (doFutility) {
             score = futilityScore;
         } else {
+            if (!MoveGen::isLegal(pos, m, inCheck))
+                continue;
             int moveExtend = 0;
             if (posExtend == 0) {
                 const int pV = Evaluate::pV;
@@ -741,7 +744,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
             sti.lmr = lmr;
             score = -negaScout(-b, -alpha, ply + 1, newDepth, newCaptureSquare, givesCheck);
             if (((lmr > 0) && (score > alpha)) ||
-                ((score > alpha) && (score < beta) && (b != beta) && (score != illegalScore))) {
+                ((score > alpha) && (score < beta) && (b != beta))) {
                 sti.lmr = 0;
                 newDepth += lmr;
                 score = -negaScout(-beta, -alpha, ply + 1, newDepth, newCaptureSquare, givesCheck);
@@ -794,6 +797,8 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
         b = alpha + 1;
     }
     if (!haveLegalMoves && !inCheck) {
+        emptyMove.setScore(0);
+        tt.insert(hKey, emptyMove, TType::T_EXACT, ply, depth, evalScore);
         log.logNodeEnd(sti.nodeIdx, 0, TType::T_EXACT, evalScore, hKey);
         return 0;       // Stale-mate
     }
@@ -842,20 +847,13 @@ Search::quiesce(int alpha, int beta, int ply, int depth, const bool inCheck) {
                 q0Eval = score;
         }
     }
-    if (score >= beta) {
-        if ((depth == 0) && (score < MATE0 - ply)) {
-            if (MoveGen::canTakeKing(pos)) {
-                // To make stale-mate detection work
-                score = MATE0 - ply;
-            }
-        }
+    if (score >= beta)
         return score;
-    }
     const int evalScore = score;
     if (score > alpha)
         alpha = score;
     int bestScore = score;
-    const bool tryChecks = (depth > -3);
+    const bool tryChecks = (depth > -1);
     MoveGen::MoveList moves;
     if (inCheck) {
         MoveGen::checkEvasions(pos, moves);
@@ -863,6 +861,13 @@ Search::quiesce(int alpha, int beta, int ply, int depth, const bool inCheck) {
         MoveGen::pseudoLegalCapturesAndChecks(pos, moves);
     } else {
         MoveGen::pseudoLegalCaptures(pos, moves);
+    }
+
+    bool realInCheckComputed = false;
+    bool realInCheck = false;
+    if (depth > -2) {
+        realInCheckComputed = true;
+        realInCheck = inCheck;
     }
     scoreMoveListMvvLva(moves);
     UndoInfo ui;
@@ -873,8 +878,6 @@ Search::quiesce(int alpha, int beta, int ply, int depth, const bool inCheck) {
             selectBest(moves, mi);
         }
         const Move& m = moves[mi];
-        if (pos.getPiece(m.to()) == (pos.whiteMove ? Piece::BKING : Piece::WKING))
-            return MATE0-ply;       // King capture
         bool givesCheck = false;
         bool givesCheckComputed = false;
         if (inCheck) {
@@ -899,7 +902,7 @@ Search::quiesce(int alpha, int beta, int ply, int depth, const bool inCheck) {
                 if (optimisticScore < alpha) { // Delta pruning
                     if ((pos.wMtrlPawns > 0) && (pos.wMtrl > capt + pos.wMtrlPawns) &&
                         (pos.bMtrlPawns > 0) && (pos.bMtrl > capt + pos.bMtrlPawns)) {
-                        if (depth -1 > -4) {
+                        if (depth -1 > -2) {
                             givesCheck = MoveGen::givesCheck(pos, m);
                             givesCheckComputed = true;
                         }
@@ -912,13 +915,16 @@ Search::quiesce(int alpha, int beta, int ply, int depth, const bool inCheck) {
                 }
             }
         }
-
-        if (!givesCheckComputed) {
-            if (depth - 1 > -4) {
-                givesCheck = MoveGen::givesCheck(pos, m);
-            }
+        if (!realInCheckComputed) {
+            realInCheck = MoveGen::inCheck(pos);
+            realInCheckComputed = true;
         }
-        const bool nextInCheck = (depth - 1) > -4 ? givesCheck : false;
+        if (!MoveGen::isLegal(pos, m, realInCheck))
+            continue;
+
+        if (!givesCheckComputed && (depth - 1 > -2))
+            givesCheck = MoveGen::givesCheck(pos, m);
+        const bool nextInCheck = (depth - 1) > -2 ? givesCheck : false;
 
         pos.makeMove(m, ui);
         qNodes++;
@@ -929,6 +935,10 @@ Search::quiesce(int alpha, int beta, int ply, int depth, const bool inCheck) {
         if (score > bestScore) {
             bestScore = score;
             if (score > alpha) {
+                if (depth == 0) {
+                    SearchTreeInfo& sti = searchTreeInfo[ply];
+                    sti.bestMove.setMove(m.from(), m.to(), m.promoteTo(), score);
+                }
                 alpha = score;
                 if (alpha >= beta)
                     return alpha;
@@ -941,6 +951,8 @@ Search::quiesce(int alpha, int beta, int ply, int depth, const bool inCheck) {
 
 int
 Search::SEE(const Move& m) {
+    int captures[64];   // Value of captured pieces
+
     const int kV = Evaluate::kV;
 
     const int square = m.to();
@@ -1075,25 +1087,8 @@ Search::scoreMoveList(MoveGen::MoveList& moves, int ply, int startIdx) {
     }
 }
 
-void
-Search::selectBest(MoveGen::MoveList& moves, int startIdx) {
-    int bestIdx = startIdx;
-    int bestScore = moves[bestIdx].score();
-    for (int i = startIdx + 1; i < moves.size; i++) {
-        int sc = moves[i].score();
-        if (sc > bestScore) {
-            bestIdx = i;
-            bestScore = sc;
-        }
-    }
-    std::swap(moves[bestIdx], moves[startIdx]);
-}
-
-/** If hashMove exists in the move list, move the hash move to the front of the list. */
 bool
 Search::selectHashMove(MoveGen::MoveList& moves, const Move& hashMove) {
-    if (hashMove.isEmpty())
-        return false;
     for (int i = 0; i < moves.size; i++) {
         Move& m = moves[i];
         if (m.equals(hashMove)) {
