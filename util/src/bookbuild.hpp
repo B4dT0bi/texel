@@ -29,6 +29,12 @@
 #include "move.hpp"
 #include "position.hpp"
 #include "treeLogger.hpp" // Serializer namespace
+#include "constants.hpp"
+#include "transpositionTable.hpp"
+#include "killerTable.hpp"
+#include "history.hpp"
+#include "evaluate.hpp"
+#include "parallel.hpp"
 
 #include <memory>
 #include <atomic>
@@ -36,13 +42,17 @@
 #include <deque>
 #include <unordered_set>
 #include <unordered_map>
+#include <set>
 #include <map>
 #include <climits>
 #include <chrono>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 class BookBuildTest;
 class GameNode;
-
+class Search;
 
 namespace BookBuild {
 
@@ -271,7 +281,9 @@ public:
     class Listener {
     public:
         virtual ~Listener() {}
-        virtual void queueChanged(int nPendingBookTasks) = 0;
+        virtual void queueSizeChanged(int nPendingBookTasks) = 0;
+        virtual void queueChanged() = 0;
+        virtual void treeChanged() = 0;
     };
     void setListener(std::unique_ptr<Listener> listener);
 
@@ -508,7 +520,8 @@ private:
     KillerTable kt;
     History ht;
     TranspositionTable& tt;
-    ParallelData pd;
+    Notifier notifier;
+    ThreadCommunicator comm;
     TreeLogger treeLog;
     std::weak_ptr<Search> search;
 
@@ -529,7 +542,7 @@ public:
     void addWorker(std::unique_ptr<SearchRunner> sr);
 
     /** Start the worker threads. Creates one thread for each SearchRunner object. */
-    void startWorkers();
+    void startWorkers(Book::Listener* listener);
 
     /** Stop worker threads as soon as possible. */
     void abort();
@@ -567,7 +580,7 @@ public:
 
 private:
     /** Worker thread main loop. */
-    void workerLoop(SearchRunner& sr);
+    void workerLoop(SearchRunner& sr, Book::Listener* listener);
 
     /** Wait for all WorkUnits to finish and then stops all threads. */
     void waitWorkers();

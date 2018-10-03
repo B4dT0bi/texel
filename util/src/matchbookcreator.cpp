@@ -27,9 +27,14 @@
 #include "position.hpp"
 #include "moveGen.hpp"
 #include "search.hpp"
+#include "transpositionTable.hpp"
+#include "history.hpp"
+#include "killerTable.hpp"
 #include "textio.hpp"
 #include "gametree.hpp"
+#include "clustertt.hpp"
 #include <unordered_set>
+#include <random>
 
 MatchBookCreator::MatchBookCreator() {
 
@@ -42,7 +47,9 @@ MatchBookCreator::createBook(int depth, int searchTime, std::ostream& os) {
     std::vector<BookLine> lines;
     for (const auto& bl : bookLines)
         lines.push_back(bl.second);
-    std::random_shuffle(lines.begin(), lines.end());
+    auto r = std::random_device()();
+    std::mt19937 rndGen(r);
+    std::shuffle(lines.begin(), lines.end(), rndGen);
     evaluateBookLines(lines, searchTime, os);
 }
 
@@ -90,10 +97,11 @@ MatchBookCreator::evaluateBookLines(std::vector<BookLine>& lines, int searchTime
                                     std::ostream& os) {
     const int nLines = lines.size();
     TranspositionTable tt(28);
-    ParallelData pd(tt);
+    Notifier notifier;
+    ThreadCommunicator comm(nullptr, tt, notifier, false);
     std::shared_ptr<Evaluate::EvalHashTables> et;
 
-#pragma omp parallel for schedule(dynamic) default(none) shared(lines,tt,pd,searchTime,os) private(et)
+#pragma omp parallel for schedule(dynamic) default(none) shared(lines,tt,comm,searchTime,os) private(et)
     for (int i = 0; i < nLines; i++) {
         BookLine& bl = lines[i];
 
@@ -105,7 +113,7 @@ MatchBookCreator::evaluateBookLines(std::vector<BookLine>& lines, int searchTime
 
         Position pos = TextIO::readFEN(TextIO::startPosFEN);
         UndoInfo ui;
-        std::vector<U64> posHashList(200 + bl.moves.size());
+        std::vector<U64> posHashList(SearchConst::MAX_SEARCH_DEPTH * 2 + bl.moves.size());
         int posHashListSize = 0;
         for (const Move& m : bl.moves) {
             posHashList[posHashListSize++] = pos.zobristHash();
@@ -118,17 +126,16 @@ MatchBookCreator::evaluateBookLines(std::vector<BookLine>& lines, int searchTime
         MoveGen::pseudoLegalMoves(pos, legalMoves);
         MoveGen::removeIllegal(pos, legalMoves);
 
-        Search::SearchTables st(tt, kt, ht, *et);
-        Search sc(pos, posHashList, posHashListSize, st, pd, nullptr, treeLog);
+        Search::SearchTables st(comm.getCTT(), kt, ht, *et);
+        Search sc(pos, posHashList, posHashListSize, st, comm, treeLog);
         sc.timeLimit(searchTime, searchTime);
 
         int maxDepth = -1;
         S64 maxNodes = -1;
-        bool verbose = false;
         int maxPV = 1;
         bool onlyExact = true;
         int minProbeDepth = 1;
-        Move bestMove = sc.iterativeDeepening(legalMoves, maxDepth, maxNodes, verbose, maxPV,
+        Move bestMove = sc.iterativeDeepening(legalMoves, maxDepth, maxNodes, maxPV,
                                               onlyExact, minProbeDepth);
         int score = bestMove.score();
         if (!pos.isWhiteMove())
@@ -225,7 +232,7 @@ public:
     /** Return standard deviation of the mean score. */
     double getStdDevScore() const {
         double N = nScores;
-        double sDev = ::sqrt(1/(N - 1) * (scoreSum2 - scoreSum * scoreSum / N));
+        double sDev = sqrt(1/(N - 1) * (scoreSum2 - scoreSum * scoreSum / N));
         return sDev / sqrt(N);
     }
 
@@ -324,8 +331,8 @@ MatchBookCreator::pgnStat(const std::string& pgnFile, bool pairMode, std::ostrea
 
         std::stringstream ss;
         ss.precision(1);
-        ss << std::fixed << (nMoves / (double)nGames);
-        os << "nGames: " << nGames << " nMoves: " << nMoves << " plies/game: " << ss.str() << std::endl;
+        ss << std::fixed << (nMoves / (double)nGames / 2);
+        os << "nGames: " << nGames << " moves/game: " << ss.str() << std::endl;
 
         if (pairMode && players.size() != 2) {
             std::cerr << "Pair mode requires two players" << std::endl;
@@ -396,5 +403,7 @@ MatchBookCreator::getCommentDepth(const std::string& comment, int& depth) {
     auto n = comment.find('/');
     if (n == std::string::npos)
         return false;
-    return str2Num(comment.substr(n+1), depth);
+    if (!str2Num(comment.substr(n+1), depth))
+        return false;
+    return depth < 200;
 }

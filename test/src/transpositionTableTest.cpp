@@ -51,6 +51,7 @@ testTTEntry() {
     ent1.setMove(move);
     ent1.setScore(score, ply);
     ent1.setDepth(3);
+    ent1.setBusy(false);
     ent1.setGeneration(0);
     ent1.setType(TType::T_EXACT);
     Move tmpMove;
@@ -58,6 +59,7 @@ testTTEntry() {
     ASSERT_EQUAL(move, tmpMove);
     ASSERT_EQUAL(score, ent1.getScore(ply));
     ASSERT_EQUAL(score, ent1.getScore(ply + 3));    // Non-mate score, should be ply-independent
+    ASSERT_EQUAL(false, ent1.getBusy());
 
     // Test positive mate score
     TTEntry ent2;
@@ -68,12 +70,14 @@ testTTEntry() {
     ent2.setMove(move);
     ent2.setScore(score, ply);
     ent2.setDepth(99);
+    ent2.setBusy(true);
     ent2.setGeneration(0);
     ent2.setType(TType::T_EXACT);
     ent2.getMove(tmpMove);
     ASSERT_EQUAL(move, tmpMove);
     ASSERT_EQUAL(score, ent2.getScore(ply));
     ASSERT_EQUAL(score + 2, ent2.getScore(ply - 2));
+    ASSERT_EQUAL(true, ent2.getBusy());
 
     // Compare ent1 and ent2
     ASSERT(!ent1.betterThan(ent2, 0));  // More depth is good
@@ -107,6 +111,22 @@ testTTEntry() {
     ASSERT_EQUAL(move, tmpMove);
     ASSERT_EQUAL(score, ent3.getScore(ply));
     ASSERT_EQUAL(score - 2, ent3.getScore(ply - 2));
+
+    // PV is better than bound if depth similar, but deep bound is better than shallow PV
+    ent1.clear();
+    ent1.setDepth(10);
+    ent1.setType(TType::T_EXACT);
+    ent2.clear();
+    ent2.setDepth(10);
+    ent2.setType(TType::T_GE);
+    ASSERT(ent1.betterThan(ent2, 0));
+    ASSERT(!ent2.betterThan(ent1, 0));
+    ent1.setDepth(9);
+    ASSERT(ent1.betterThan(ent2, 0));
+    ASSERT(!ent2.betterThan(ent1, 0));
+    ent1.setDepth(3);
+    ASSERT(!ent1.betterThan(ent2, 0));
+    ASSERT(ent2.betterThan(ent1, 0));
 }
 
 /**
@@ -128,7 +148,13 @@ testInsert() {
         int type = TType::T_EXACT;
         int ply = i + 1;
         int depth = (i * 2 + 5);
-        tt.insert(pos.historyHash(), m, type, ply, depth, score * 2 + 3);
+        tt.insert(pos.historyHash(), m, type, ply, depth, score * 2 + 3, (i % 2) == 0);
+        if (i == 7) {
+            TranspositionTable::TTEntry ent;
+            ent.clear();
+            tt.probe(pos.historyHash(), ent);
+            tt.setBusy(ent, ply);
+        }
     }
 
     pos = TextIO::readFEN(TextIO::startPosFEN);
@@ -148,6 +174,7 @@ testInsert() {
         Move tmpMove;
         ent.getMove(tmpMove);
         ASSERT_EQUAL(m, tmpMove);
+        ASSERT_EQUAL((i % 2) == 0 || (i == 7), ent.getBusy());
     }
 }
 
@@ -158,8 +185,7 @@ static void
 testMateDepth() {
     TranspositionTable& tt(SearchTest::tt);
     Position pos = TextIO::readFEN("rnbqkbnr/pppp1ppp/8/4p3/8/5P1P/PPPPP1P1/RNBQKBNR b KQkq - 0 2");
-    Search sc(pos, SearchTest::nullHist, 0, SearchTest::st, SearchTest::pd,
-              nullptr, SearchTest::treeLog);
+    Search sc(pos, SearchTest::nullHist, 0, SearchTest::st, SearchTest::comm, SearchTest::treeLog);
     Move m = SearchTest::idSearch(sc, 2, 100);
     ASSERT_EQUAL("d8h4", TextIO::moveToUCIString(m));
     UndoInfo ui;
@@ -237,11 +263,71 @@ testMateDepth() {
     ASSERT( ent.isCutOff(-(mate0 - 60), -(mate0 - 70), ply, 3));
 }
 
+static void
+testHashFuncBackComp() {
+    U64 hash1 = 0;
+    U64 hash2 = 0;
+    auto addToHash = [&](const Position& pos) {
+        U64 k1 = 0x9F98351204FE0025ULL;
+        U64 k2 = 0x4E7123A3F8FDA837ULL;
+        hash1 = (hash1 * k1) ^ pos.historyHash();
+        hash2 = (hash2 * k2) ^ pos.bookHash();
+    };
+    auto addFenToHash = [&](const std::string& fen) {
+        addToHash(TextIO::readFEN(fen));
+    };
+
+    for (int p = Piece::EMPTY; p <= Piece::BPAWN; p++) {
+        for (int sq = 0; sq < 64; sq++) {
+            Position pos;
+            pos.setPiece(sq, p);
+            addToHash(pos);
+        }
+    }
+    ASSERT_EQUAL(0x5BBFE2B3AFB006C2ULL, hash1);
+    ASSERT_EQUAL(0xAD4B1EC702331510ULL, hash2);
+
+    addFenToHash("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
+    ASSERT_EQUAL(0x75822BCC01D378C6ULL, hash1);
+    ASSERT_EQUAL(0x1673E04BA881DF7EULL, hash2);
+
+    for (int i = 0; i < 16; i++) {
+        Position pos = TextIO::readFEN(TextIO::startPosFEN);
+        pos.setCastleMask(i);
+        addToHash(pos);
+    }
+    ASSERT_EQUAL(0x3701B8575EB511B2ULL, hash1);
+    ASSERT_EQUAL(0xE966E3BD5C3A5538ULL, hash2);
+
+    for (int i = 0; i < 110; i++) {
+        Position pos = TextIO::readFEN(TextIO::startPosFEN);
+        pos.setHalfMoveClock(i);
+        addToHash(pos);
+        pos = TextIO::readFEN("8/3k4/8/8/8/8/8/3KR3 w - - 0 1");
+        pos.setHalfMoveClock(i);
+        addToHash(pos);
+    }
+    ASSERT_EQUAL(0x557086EB66B28115ULL, hash1);
+    ASSERT_EQUAL(0xB7D0875484983968ULL, hash2);
+
+    addFenToHash("rnbqkbnr/p1pppppp/8/8/Pp6/8/1PPPPPPP/RNBQKBNR b KQkq a3 0 2");
+    addFenToHash("rnbqkbnr/pp1ppppp/8/8/1Pp5/8/P1PPPPPP/RNBQKBNR b KQkq b3 0 1");
+    addFenToHash("rnbqkbnr/ppp1pppp/8/8/2Pp4/8/PP1PPPPP/RNBQKBNR b KQkq c3 0 1");
+    addFenToHash("rnbqkbnr/pp1ppppp/8/8/2pP4/8/PPP1PPPP/RNBQKBNR b KQkq d3 0 1");
+    addFenToHash("rnbqkbnr/ppppp1pp/8/8/4Pp2/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
+    addFenToHash("rnbqkbnr/pppp1ppp/8/8/4pP2/8/PPPPP1PP/RNBQKBNR b KQkq f3 0 1");
+    addFenToHash("rnbqkbnr/ppppp1pp/8/8/5pP1/8/PPPPPP1P/RNBQKBNR b KQkq g3 0 1");
+    addFenToHash("rnbqkbnr/pppppp1p/8/8/6pP/8/PPPPPPP1/RNBQKBNR b KQkq h3 0 1");
+    ASSERT_EQUAL(0xFE05FCA83AC9EF47ULL, hash1);
+    ASSERT_EQUAL(0x9CCCE083C803D732ULL, hash2);
+}
+
 cute::suite
 TranspositionTableTest::getSuite() const {
     cute::suite s;
     s.push_back(CUTE(testTTEntry));
     s.push_back(CUTE(testInsert));
     s.push_back(CUTE(testMateDepth));
+    s.push_back(CUTE(testHashFuncBackComp));
     return s;
 }

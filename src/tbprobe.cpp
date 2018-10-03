@@ -49,7 +49,7 @@ static std::unordered_map<int,int> maxDTM; // MatId -> Max DTM value in GTB TB
 static std::unordered_map<int,int> maxDTZ; // MatId -> Max DTZ value in RTB TB
 struct IIPairHash {
     size_t operator()(const std::pair<int,int>& p) const {
-        return p.first * 0x714d3559 + p.second;
+        return ((U64)p.first) * 0x714d3559 + (U64)p.second;
     }
 };
 // (MatId,maxPawnMoves) -> Max DTM in sub TBs
@@ -113,7 +113,7 @@ static inline int rule50Margin(int dtmScore, int ply, int hmc,
 
 bool
 TBProbe::tbProbe(Position& pos, int ply, int alpha, int beta,
-                 TranspositionTable& tt, TranspositionTable::TTEntry& ent,
+                 const TranspositionTable& tt, TranspositionTable::TTEntry& ent,
                  const int nPieces) {
     // Probe on-demand TB
     const int hmc = pos.getHalfMoveClock();
@@ -241,10 +241,11 @@ TBProbe::tbProbe(Position& pos, int ply, int alpha, int beta,
 bool
 TBProbe::getSearchMoves(Position& pos, const MoveList& legalMoves,
                         std::vector<Move>& movesToSearch,
-                        TranspositionTable& tt) {
+                        const TranspositionTable& tt) {
     const int mate0 = SearchConst::MATE0;
     const int ply = 0;
     TranspositionTable::TTEntry rootEnt;
+    rootEnt.clear();
     if (!tbProbe(pos, ply, -mate0, mate0, tt, rootEnt) || rootEnt.getType() == TType::T_LE)
         return false;
     const int rootScore = rootEnt.getScore(ply);
@@ -280,7 +281,7 @@ TBProbe::getSearchMoves(Position& pos, const MoveList& legalMoves,
 }
 
 bool
-TBProbe::dtmProbe(Position& pos, int ply, TranspositionTable& tt, int& score) {
+TBProbe::dtmProbe(Position& pos, int ply, const TranspositionTable& tt, int& score) {
     const int nPieces = BitBoard::bitCount(pos.occupiedBB());
     if (nPieces <= 4 && tt.probeDTM(pos, ply, score))
         return true;
@@ -290,7 +291,7 @@ TBProbe::dtmProbe(Position& pos, int ply, TranspositionTable& tt, int& score) {
 }
 
 void
-TBProbe::extendPV(const Position& rootPos, std::vector<Move>& pv, TranspositionTable& tt) {
+TBProbe::extendPV(const Position& rootPos, std::vector<Move>& pv, const TranspositionTable& tt) {
     Position pos(rootPos);
     UndoInfo ui;
     int ply = 0;
@@ -417,6 +418,9 @@ TBProbe::rtbProbeDTZ(Position& pos, int ply, int& score,
     }
     const int maxHalfMoveClock = std::abs(dtz) + pos.getHalfMoveClock();
     const int sgn = dtz > 0 ? 1 : -1;
+    if ((maxHalfMoveClock == 100) && (pos.getHalfMoveClock() > 0) &&
+        (maxDTZ.find(pos.materialId())->second != 100)) // dtz can be off by one
+        return false;
     if (abs(dtz) <= 2) {
         if (maxHalfMoveClock > 101) {
             score = 0;
@@ -425,9 +429,6 @@ TBProbe::rtbProbeDTZ(Position& pos, int ply, int& score,
         } else if (maxHalfMoveClock == 101)
             return false; // DTZ can be wrong when mate-in-1
     } else {
-        if ((maxHalfMoveClock == 100) && (pos.getHalfMoveClock() > 0) &&
-            (maxDTZ.find(pos.materialId())->second != 100)) // dtz can be off by one
-            return false;
         if (maxHalfMoveClock > 100) {
             score = 0;
             if (std::abs(dtz) <= 100)

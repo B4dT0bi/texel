@@ -1,6 +1,6 @@
 /*
     Texel - A UCI chess engine.
-    Copyright (C) 2012-2014  Peter Österlund, peterosterlund2@gmail.com
+    Copyright (C) 2016  Peter Österlund, peterosterlund2@gmail.com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,40 +17,35 @@
 */
 
 /*
- * chessParseError.hpp
+ * largePageAlloc.hpp
  *
- *  Created on: Feb 25, 2012
+ *  Created on: Oct 19, 2016
  *      Author: petero
  */
 
-#ifndef CHESSPARSEERROR_HPP_
-#define CHESSPARSEERROR_HPP_
+#ifndef LARGEPAGEALLOC_HPP_
+#define LARGEPAGEALLOC_HPP_
 
-#include <exception>
-#include <string>
+#include <memory>
 
-/**
- * Exception class to represent parse errors in FEN or algebraic notation.
- */
-class ChessParseError : public std::exception {
+
+/** A utility class for allocating memory using large pages
+ *  if supported by the operating system. */
+class LargePageAlloc {
 public:
-    ChessParseError();
-    explicit ChessParseError(const std::string& msg);
-
-    virtual const char* what() const noexcept override;
+    template <typename T>
+    static std::shared_ptr<T> allocate(size_t numEntries);
 
 private:
-    std::string msg_;
+    static std::shared_ptr<void> allocBytes(size_t numBytes);
 };
 
+
+template <typename T>
 inline
-ChessParseError::ChessParseError(const std::string& msg)
-    : msg_(msg) {
+std::shared_ptr<T> LargePageAlloc::allocate(size_t numEntries) {
+    size_t numBytes = numEntries * sizeof(T);
+    return std::static_pointer_cast<T, void>(allocBytes(numBytes));
 }
 
-inline const char*
-ChessParseError::what() const throw() {
-    return msg_.c_str();
-}
-
-#endif /* CHESSPARSEERROR_HPP_ */
+#endif /* LARGEPAGEALLOC_HPP_ */

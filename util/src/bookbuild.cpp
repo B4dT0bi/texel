@@ -28,7 +28,9 @@
 #include "gametree.hpp"
 #include "moveGen.hpp"
 #include "search.hpp"
+#include "util/histogram.hpp"
 #include "textio.hpp"
+#include <random>
 
 namespace BookBuild {
 
@@ -263,7 +265,7 @@ public:
                     const std::atomic<U64>& startPosHash,
                     const std::atomic<bool>& stopFlag0) :
         book(b), mutex(mutex0), startHash(startPosHash),
-        stopFlag(stopFlag0), whiteBook(true) {
+        stopFlag(stopFlag0), whiteBook(true), rndGen(std::random_device()()) {
     }
 
     bool getNextPosition(Position& pos, Move& move) override {
@@ -286,7 +288,7 @@ public:
             }
             if (goodChildren.empty())
                 break;
-            std::random_shuffle(goodChildren.begin(), goodChildren.end());
+            std::shuffle(goodChildren.begin(), goodChildren.end(), rndGen);
             ptr = goodChildren[0];
         }
         move = ptr->getBestNonBookMove();
@@ -304,6 +306,7 @@ private:
     const std::atomic<U64>& startHash;
     const std::atomic<bool>& stopFlag;
     bool whiteBook;
+    std::mt19937 rndGen;
 };
 
 void
@@ -404,7 +407,7 @@ Book::exportPolyglot(const std::string& bookFile, const std::string& polyglotFil
         void addMove(U16 m, double w) {
             assert(w >= 0.0);
             if (w == 0.0)
-                w = 1.0; // Happens when best move has path error > maxErrSelf
+                w = 1e-30; // Happens when best move has path error > maxErrSelf
             for (size_t i = 0; i < vec.size(); i++)
                 if (vec[i].move == m) {
                     vec[i].weight += w;
@@ -729,7 +732,7 @@ Book::extendBook(PositionSelector& selector, int searchTime, int numThreads,
             scheduler->addWorker(std::move(sr));
         }
     }
-    scheduler->startWorkers();
+    scheduler->startWorkers(listener.get());
 
     int numPending = 0;
     const int desiredQueueLen = numThreads + 1;
@@ -769,8 +772,10 @@ Book::extendBook(PositionSelector& selector, int searchTime, int numThreads,
         }
         if (!workAdded && (numPending == 0))
             break;
-        if (workAdded && listener)
-            listener->queueChanged(numPending);
+        if (workAdded && listener) {
+            listener->queueSizeChanged(numPending);
+            listener->treeChanged();
+        }
         if (!workAdded || (numPending >= desiredQueueLen)) {
             SearchScheduler::WorkUnit wu;
             scheduler->getResult(wu);
@@ -793,12 +798,14 @@ Book::extendBook(PositionSelector& selector, int searchTime, int numThreads,
                     scheduler->reportResult(wu);
                 }
             }
-            if (workRemoved && listener && numPending > 0)
-                listener->queueChanged(numPending);
+            if (workRemoved && listener && numPending > 0) {
+                listener->queueSizeChanged(numPending);
+                listener->treeChanged();
+            }
         }
     }
     if (listener)
-        listener->queueChanged(0);
+        listener->queueSizeChanged(0);
 }
 
 std::vector<Move>
@@ -1365,7 +1372,8 @@ Book::getQueueData(QueueData& queueData) const {
 // ----------------------------------------------------------------------------
 
 SearchRunner::SearchRunner(int instanceNo0, TranspositionTable& tt0)
-    : instanceNo(instanceNo0), tt(tt0), pd(tt), aborted(false) {
+    : instanceNo(instanceNo0), tt(tt0),
+      comm(nullptr, tt, notifier, false), aborted(false) {
 }
 
 Move
@@ -1374,7 +1382,7 @@ SearchRunner::analyze(const std::vector<Move>& gameMoves,
                       int searchTime) {
     Position pos = TextIO::readFEN(TextIO::startPosFEN);
     UndoInfo ui;
-    std::vector<U64> posHashList(200 + gameMoves.size());
+    std::vector<U64> posHashList(SearchConst::MAX_SEARCH_DEPTH * 2 + gameMoves.size());
     int posHashListSize = 0;
     for (const Move& m : gameMoves) {
         posHashList[posHashListSize++] = pos.zobristHash();
@@ -1401,11 +1409,11 @@ SearchRunner::analyze(const std::vector<Move>& gameMoves,
 
     kt.clear();
     ht.init();
-    Search::SearchTables st(tt, kt, ht, et);
+    Search::SearchTables st(comm.getCTT(), kt, ht, et);
     std::shared_ptr<Search> sc;
     {
         std::lock_guard<std::mutex> L(mutex);
-        sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, pd, nullptr, treeLog);
+        sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, comm, treeLog);
         search = sc;
         int minTimeLimit = aborted ? 0 : searchTime;
         int maxTimeLimit = aborted ? 0 : searchTime;
@@ -1418,11 +1426,10 @@ SearchRunner::analyze(const std::vector<Move>& gameMoves,
 
     int maxDepth = -1;
     S64 maxNodes = -1;
-    bool verbose = false;
     int maxPV = 1;
     bool onlyExact = true;
     int minProbeDepth = 1;
-    Move bestMove = sc->iterativeDeepening(moveList, maxDepth, maxNodes, verbose, maxPV,
+    Move bestMove = sc->iterativeDeepening(moveList, maxDepth, maxNodes, maxPV,
                                            onlyExact, minProbeDepth);
     return bestMove;
 }
@@ -1451,11 +1458,11 @@ SearchScheduler::addWorker(std::unique_ptr<SearchRunner> sr) {
 }
 
 void
-SearchScheduler::startWorkers() {
+SearchScheduler::startWorkers(Book::Listener* listener) {
     for (auto& w : workers) {
         SearchRunner& sr = *w;
-        auto thread = make_unique<std::thread>([this,&sr]() {
-            workerLoop(sr);
+        auto thread = make_unique<std::thread>([this,&sr,listener]() {
+            workerLoop(sr, listener);
         });
         threads.push_back(std::move(thread));
     }
@@ -1547,7 +1554,7 @@ SearchScheduler::reportResult(const WorkUnit& wu) const {
 }
 
 void
-SearchScheduler::workerLoop(SearchRunner& sr) {
+SearchScheduler::workerLoop(SearchRunner& sr, Book::Listener* listener) {
     while (true) {
         WorkUnit wu;
         QueueItem item;
@@ -1564,17 +1571,21 @@ SearchScheduler::workerLoop(SearchRunner& sr) {
             item.startTime = std::chrono::system_clock::now();
             item.completed = false;
             runningItems[sr.instNo()] = item;
+            if (listener)
+                listener->queueChanged();
         }
         wu.bestMove = sr.analyze(wu.gameMoves, wu.movesToSearch, wu.searchTime);
         wu.instNo = sr.instNo();
         {
-            std::unique_lock<std::mutex> L(mutex);
+            std::lock_guard<std::mutex> L(mutex);
             bool empty = complete.empty();
             complete.push_back(wu);
             if (empty)
                 completeCv.notify_all();
 
             runningItems.erase(sr.instNo());
+            if (listener)
+                listener->queueChanged();
             item.completed = true;
             finishedItems.push_back(item);
             while (finishedItems.size() > 10)

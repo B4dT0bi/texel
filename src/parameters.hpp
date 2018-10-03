@@ -139,10 +139,8 @@ public:
 
         ComboParam(const std::string& name, const std::vector<std::string>& allowed,
                    const std::string& def)
-            : ParamBase(name, COMBO) {
-            this->allowedValues = allowed;
-            this->value = def;
-            this->defaultValue = def;
+            : ParamBase(name, COMBO), allowedValues(allowed),
+              value(def), defaultValue(def) {
         }
 
         std::string getStringPar() const override { return value; }
@@ -161,7 +159,7 @@ public:
 
     /** An action parameter. */
     struct ButtonParam : public ParamBase {
-        ButtonParam(const std::string& name)
+        explicit ButtonParam(const std::string& name)
             : ParamBase(name, BUTTON) { }
 
         void set(const std::string& value) override {
@@ -175,9 +173,7 @@ public:
         std::string defaultValue;
 
         StringParam(const std::string& name, const std::string& def)
-            : ParamBase(name, STRING) {
-            this->value = def;
-            this->defaultValue = def;
+            : ParamBase(name, STRING), value(def), defaultValue(def) {
         }
 
         std::string getStringPar() const override { return value; }
@@ -299,7 +295,7 @@ private:
 template <int N>
 class ParamTableMirrored {
 public:
-    ParamTableMirrored(ParamTable<N>& orig0) : orig(orig0) {
+    explicit ParamTableMirrored(ParamTable<N>& orig0) : orig(orig0) {
         orig.addListener([this]() {
             if (N == 64) {
                 for (int sq = 0; sq < N; sq++)
@@ -373,6 +369,7 @@ namespace UciParams {
     extern std::shared_ptr<Parameters::StringParam> rtbPath;
     extern std::shared_ptr<Parameters::SpinParam> minProbeDepth;
 
+    extern std::shared_ptr<Parameters::CheckParam> analysisAgeHash;
     extern std::shared_ptr<Parameters::ButtonParam> clearHash;
 }
 
@@ -414,9 +411,7 @@ DECLARE_PARAM(krpknBonus,          149, 0, 400, useUciParam);
 DECLARE_PARAM(RvsBPBonus,          -30, -200, 200, useUciParam);
 
 DECLARE_PARAM(pawnTradePenalty,    50, 0, 100, useUciParam);
-DECLARE_PARAM(pieceTradeBonus,     9, 0, 100, useUciParam);
 DECLARE_PARAM(pawnTradeThreshold,  358, 100, 1000, useUciParam);
-DECLARE_PARAM(pieceTradeThreshold, 693, 10, 1000, useUciParam);
 
 DECLARE_PARAM(threatBonus1,       66, 5, 500, useUciParam);
 DECLARE_PARAM(threatBonus2,     1196, 100, 10000, useUciParam);
@@ -507,10 +502,10 @@ DECLARE_PARAM(rootLMRMoveCount, 2, 0, 100, useUciParam);
 DECLARE_PARAM(razorMargin1, 86, 1, 500, useUciParam);
 DECLARE_PARAM(razorMargin2, 353, 1, 1000, useUciParam);
 
-DECLARE_PARAM(reverseFutilityMargin1, 204, 1, 1000, useUciParam);
-DECLARE_PARAM(reverseFutilityMargin2, 420, 1, 1000, useUciParam);
-DECLARE_PARAM(reverseFutilityMargin3, 533, 1, 2000, useUciParam);
-DECLARE_PARAM(reverseFutilityMargin4, 788, 1, 3000, useUciParam);
+DECLARE_PARAM(reverseFutilityMargin1, 102, 1, 1000, useUciParam);
+DECLARE_PARAM(reverseFutilityMargin2, 210, 1, 1000, useUciParam);
+DECLARE_PARAM(reverseFutilityMargin3, 267, 1, 2000, useUciParam);
+DECLARE_PARAM(reverseFutilityMargin4, 394, 1, 3000, useUciParam);
 
 DECLARE_PARAM(futilityMargin1,  61, 1,  500, useUciParam);
 DECLARE_PARAM(futilityMargin2, 144, 1,  500, useUciParam);

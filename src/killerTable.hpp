@@ -26,8 +26,8 @@
 #ifndef KILLERTABLE_HPP_
 #define KILLERTABLE_HPP_
 
-#include "util/util.hpp"
 #include "move.hpp"
+#include "constants.hpp"
 #include <cassert>
 
 
@@ -57,10 +57,10 @@ private:
     /** There is one KTEntry for each ply in the search tree. */
     struct KTEntry {
         KTEntry();
-        RelaxedShared<int> move0;
-        RelaxedShared<int> move1;
+        int move0;
+        int move1;
     };
-    KTEntry ktList[200];
+    KTEntry ktList[SearchConst::MAX_SEARCH_DEPTH * 2];
 };
 
 inline

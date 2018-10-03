@@ -349,6 +349,15 @@ TBTest::rtbTest() {
     resDTZ = TBProbe::rtbProbeDTZ(pos, ply, dtz, ent);
     ASSERT(!resDTZ);
 
+    // DTZ = 2, DTZ + hmc = 100. RTB does not know the answer
+    // because the TB class has maxDTZ < 100
+    pos = TextIO::readFEN("6kq/8/4N3/7Q/8/8/8/1K6 w - - 98 15");
+    resWDL = TBProbe::rtbProbeWDL(pos, ply, wdl, ent);
+    ASSERT(resWDL);
+    ASSERT(SearchConst::isWinScore(wdl)); // WDL probes assume hmc is 0
+    resDTZ = TBProbe::rtbProbeDTZ(pos, ply, dtz, ent);
+    ASSERT(!resDTZ);
+
     // DTZ + hmc > 100, draw
     pos = TextIO::readFEN("7q/3N2k1/8/8/8/7Q/8/1K6 w - - 71 1");
     resWDL = TBProbe::rtbProbeWDL(pos, ply, wdl, ent);
@@ -456,6 +465,7 @@ TBTest::tbTest() {
     // DTM > 100 when ignoring 50-move rule, RTB probes must be used when available
     Position pos = TextIO::readFEN("1R5Q/8/6k1/8/4q3/8/8/K7 b - - 0 1");
     TranspositionTable::TTEntry ent;
+    ent.clear();
     bool res = TBProbe::tbProbe(pos, ply, -10, 10, tt, ent);
     ASSERT(res);
     ASSERT_EQUAL(TType::T_LE, ent.getType());
@@ -546,15 +556,13 @@ TBTest::tbTest() {
 
     {
         pos = TextIO::readFEN("2R5/4k3/Q7/8/8/8/8/K7 w - - 98 1");
-        Search sc(pos, SearchTest::nullHist, 0, SearchTest::st, SearchTest::pd,
-                  nullptr, SearchTest::treeLog);
+        Search sc(pos, SearchTest::nullHist, 0, SearchTest::st, SearchTest::comm, SearchTest::treeLog);
         Move m = SearchTest::idSearch(sc, 4, 0);
         ASSERT_EQUAL("a6e6", TextIO::moveToUCIString(m));
     }
     {
         pos = TextIO::readFEN("2R5/4k3/Q7/8/8/8/8/K7 w - - 97 1");
-        Search sc(pos, SearchTest::nullHist, 0, SearchTest::st, SearchTest::pd,
-                  nullptr, SearchTest::treeLog);
+        Search sc(pos, SearchTest::nullHist, 0, SearchTest::st, SearchTest::comm, SearchTest::treeLog);
         Move m = SearchTest::idSearch(sc, 4, 1);
         ASSERT_EQUAL("c8c7", TextIO::moveToUCIString(m));
     }
@@ -593,8 +601,7 @@ TBTest::testMissingTables() {
         if (gtb)
             compareMoves(std::vector<std::string>{"e7e8q", "e7e8r", "e7e8b", "e7e8n"}, movesToSearch);
         {
-            Search sc(pos, SearchTest::nullHist, 0, SearchTest::st, SearchTest::pd,
-                      nullptr, SearchTest::treeLog);
+            Search sc(pos, SearchTest::nullHist, 0, SearchTest::st, SearchTest::comm, SearchTest::treeLog);
             Move m = SearchTest::idSearch(sc, 4, 3);
             ASSERT_EQUAL("e7e8q", TextIO::moveToUCIString(m));
         }

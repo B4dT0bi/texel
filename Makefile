@@ -1,8 +1,10 @@
-SRC_COMMON	= bitBoard.cpp book.cpp computerPlayer.cpp endGameEval.cpp evaluate.cpp \
-		  game.cpp history.cpp humanPlayer.cpp killerTable.cpp kpkTable.cpp \
-		  krkpTable.cpp krpkrTable.cpp material.cpp move.cpp moveGen.cpp numa.cpp parameters.cpp \
-		  parallel.cpp piece.cpp polyglot.cpp position.cpp search.cpp tbgen.cpp tbprobe.cpp \
-		  textio.cpp transpositionTable.cpp treeLogger.cpp \
+SRC_COMMON	= bitBoard.cpp book.cpp cluster.cpp clustertt.cpp computerPlayer.cpp \
+		  endGameEval.cpp evaluate.cpp game.cpp history.cpp humanPlayer.cpp \
+		  killerTable.cpp kpkTable.cpp krkpTable.cpp krpkrTable.cpp \
+		  largePageAlloc.cpp material.cpp move.cpp moveGen.cpp numa.cpp \
+		  parameters.cpp parallel.cpp piece.cpp polyglot.cpp \
+		  position.cpp search.cpp tbgen.cpp tbprobe.cpp textio.cpp \
+		  transpositionTable.cpp treeLogger.cpp \
 		  util/logger.cpp util/random.cpp util/timeUtil.cpp util/util.cpp \
 		  syzygy/rtb-probe.cpp
 
@@ -38,29 +40,39 @@ INC_BOOKGUI	= -Isrc -Iutil/src
 # The following preprocessor symbols can be defined to enable CPU, OS and compiler
 # specific features:
 #
-# -DHAS_POPCNT    : Use CPU popcount instructions to speed up counting of number of
-#                   1 bits in a bitboard object. Requires a compiler that supports the
-#                   __builtin_popcountl() function and a CPU that supports the
-#                   corresponding machine code instruction.
+# -DHAS_BMI2        : Use BMI2 instructions to speed up move generation. Requires
+#                     the gcc compiler and a CPU that supports BMI2 instructions.
+#	              The compiler flag '-mbmi2' must be used when HAS_BMI2 is defined.
 #
-# -DHAS_CTZ       : Use a special CPU instruction to find the first 1 bit in a bitboard
-#                   object. Requires a compiler that supports the __builtin_ctzl function
-#                   and a CPU that supports the corresponding machine code instruction.
+# -DHAS_POPCNT      : Use CPU popcount instructions to speed up counting of number of
+#                     1 bits in a bitboard object. Requires a compiler that supports the
+#                     __builtin_popcountl() function and a CPU that supports the
+#                     corresponding machine code instruction.
 #
-# -DHAS_PREFETCH  : Use CPU prefetch instructions to speed up hash table access. Requires
-#                   a compiler that supports the __builtin_prefetch() function and a CPU
-#                   that supports the corresponding machine code instruction.
+# -DHAS_CTZ         : Use a special CPU instruction to find the first 1 bit in a bitboard
+#                     object. Requires a compiler that supports the __builtin_ctzl function
+#                     and a CPU that supports the corresponding machine code instruction.
 #
-# -DHAS_RT        : Use the posix clock_gettime() function to get the current time
-#                   with nanosecond resolution. When used "-lrt" may have to be added to
-#                   the linker flags.
+# -DHAS_PREFETCH    : Use CPU prefetch instructions to speed up hash table access. Requires
+#                     a compiler that supports the __builtin_prefetch() function and a CPU
+#                     that supports the corresponding machine code instruction.
 #
-# -DNUMA          : Optimize thread affinity and memory allocation when running on
-#                   NUMA hardware.
+# -DHAS_RT          : Use the posix clock_gettime() function to get the current time
+#                     with nanosecond resolution. When used, "-lrt" may have to be added to
+#                     the linker flags.
+#
+# -DNUMA            : Optimize thread affinity and memory allocation when running on
+#                     NUMA hardware.
+#
+# -DUSE_LARGE_PAGES : Use large pages when allocating memory for the transposition table,
+#                     if supported by the operating system.
+#
+# -DCLUSTER         : Use MPI to distribute the search to several computers connected
+#                     in a cluster.
 
 # Definitions used by the "texel" target
 CXX_DEF		= g++
-FLAGS_DEF	= -O3 -Wall -pthread $(INC)
+FLAGS_DEF	= -O3 -Wall -Wno-misleading-indentation -pthread $(INC)
 CXXFLAGS_DEF	= -std=c++11 $(FLAGS_DEF)
 CXXFLAGS_UTIL_DEF = -fopenmp
 CXXFLAGS_BOOKGUI_DEF = $$(pkg-config gtkmm-3.0 --cflags)
@@ -82,10 +94,12 @@ OBJS_BOOKGUI_DEF = $(patsubst %.cpp,objdef/%.o,$(SRC_BOOKGUI))
 
 
 # Definitions used by the "texel32" and "texel64" targets
+#CXX		= mpic++
 CXX		= g++
-FLAGS		= -O3 -Wall -pthread $(INC) -march=corei7 \
-		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT
+FLAGS		= -O3 -Wall -pthread $(INC) -march=corei7 -Wno-misleading-indentation \
+		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT -DUSE_LARGE_PAGES -fno-PIC
 CXXFLAGS	= -std=c++11 $(FLAGS)
+#CC		= mpicc
 CC		= gcc
 CFLAGS		= $(FLAGS)
 LDFLAGS		= -pthread -lrt
@@ -94,14 +108,14 @@ OBJS_32		= $(patsubst %.cpp,obj32/%.o,$(SRC))
 OBJS_64		= $(patsubst %.cpp,obj64/%.o,$(SRC))
 OBJS_C_32	= $(patsubst %.c,obj32/%.o,$(SRC_GTB))
 OBJS_C_64	= $(patsubst %.c,obj64/%.o,$(SRC_GTB))
-#FLAGS		+= -DNUMA
+#FLAGS		+= -DNUMA -DCLUSTER
 #LDFLAGS	+= -lnuma
 
 
 # Definitions used by the "texel64.exe" target
 CXX_WIN 	= x86_64-w64-mingw32-g++
-FLAGS_WIN	= -O3 -Wall -pthread $(INC) -march=corei7 \
-		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT -DNUMA -D_WIN32_WINNT=0x0601
+FLAGS_WIN	= -O3 -Wall -pthread $(INC) -march=corei7 -Wno-misleading-indentation \
+		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT -DUSE_LARGE_PAGES -DNUMA -D_WIN32_WINNT=0x0601
 CXXFLAGS_WIN	= -std=c++11 $(FLAGS_WIN)
 CC_WIN		= x86_64-w64-mingw32-gcc
 CFLAGS_WIN	= $(FLAGS_WIN)
@@ -110,9 +124,35 @@ STRIP_WIN	= x86_64-w64-mingw32-strip
 OBJS_W64 	= $(patsubst %.cpp,objw64/%.o,$(SRC))
 OBJS_C_W64 	= $(patsubst %.c,objw64/%.o,$(SRC_GTB))
 
+# Definitions used by the "texel64bmi.exe" target
+CXX_WINBMI 	= x86_64-w64-mingw32-g++
+FLAGS_WINBMI	= -O3 -Wall -pthread $(INC) -march=corei7 -Wno-misleading-indentation \
+		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT -DUSE_LARGE_PAGES -DNUMA \
+                  -D_WIN32_WINNT=0x0601 -DHAS_BMI2 -mbmi2
+CXXFLAGS_WINBMI	= -std=c++11 $(FLAGS_WINBMI)
+CC_WINBMI	= x86_64-w64-mingw32-gcc
+CFLAGS_WINBMI	= $(FLAGS_WINBMI)
+LDFLAGS_WINBMI	= -pthread
+STRIP_WINBMI	= x86_64-w64-mingw32-strip
+OBJS_W64BMI 	= $(patsubst %.cpp,objw64bmi/%.o,$(SRC))
+OBJS_C_W64BMI 	= $(patsubst %.c,objw64bmi/%.o,$(SRC_GTB))
+
+# Definitions used by the "texel64cl.exe" target
+CXX_WINCL 	= x86_64-w64-mingw32-g++
+FLAGS_WINCL	= -O3 -Wall -pthread $(INC) -march=corei7 -Wno-misleading-indentation \
+		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT -DUSE_LARGE_PAGES -DNUMA \
+                  -D_WIN32_WINNT=0x0601 -DCLUSTER -I$(MINGW_MPI)/include
+CXXFLAGS_WINCL	= -std=c++11 $(FLAGS_WINCL)
+CC_WINCL	= x86_64-w64-mingw32-gcc
+CFLAGS_WINCL	= $(FLAGS_WINCL)
+LDFLAGS_WINCL	= -pthread $(MINGW_MPI)/libmsmpi.a
+STRIP_WINCL	= x86_64-w64-mingw32-strip
+OBJS_W64CL 	= $(patsubst %.cpp,objw64cl/%.o,$(SRC))
+OBJS_C_W64CL 	= $(patsubst %.c,objw64cl/%.o,$(SRC_GTB))
+
 # Definitions used by the "texel64amd.exe" target
 CXX_WINAMD 	= x86_64-w64-mingw32-g++
-FLAGS_WINAMD	= -O3 -Wall -pthread $(INC) -march=athlon64-sse3 -mpopcnt \
+FLAGS_WINAMD	= -O3 -Wall -pthread $(INC) -march=athlon64-sse3 -mpopcnt -Wno-misleading-indentation \
 		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT -DNUMA
 CXXFLAGS_WINAMD	= -std=c++11 $(FLAGS_WINAMD)
 CC_WINAMD	= x86_64-w64-mingw32-gcc
@@ -124,7 +164,7 @@ OBJS_C_W64AMD 	= $(patsubst %.c,objw64amd/%.o,$(SRC_GTB))
 
 # Definitions used by the "texel64old.exe" target
 CXX_WINOLD 	= x86_64-w64-mingw32-g++
-FLAGS_WINOLD	= -O3 -Wall -pthread $(INC) -DHAS_RT -DNUMA
+FLAGS_WINOLD	= -O3 -Wall -Wno-misleading-indentation -pthread $(INC) -DHAS_RT -DNUMA
 CXXFLAGS_WINOLD	= -std=c++11 $(FLAGS_WINOLD)
 CC_WINOLD	= x86_64-w64-mingw32-gcc
 CFLAGS_WINOLD	= $(FLAGS_WINOLD)
@@ -135,7 +175,7 @@ OBJS_C_W64OLD 	= $(patsubst %.c,objw64old/%.o,$(SRC_GTB))
 
 # Definitions used by the "texel32.exe" target
 CXX_WIN32 	= i686-w64-mingw32-g++
-FLAGS_WIN32	= -O3 -Wall -pthread $(INC) -march=athlon64-sse3 -mpopcnt \
+FLAGS_WIN32	= -O3 -Wall -pthread $(INC) -march=athlon64-sse3 -mpopcnt -Wno-misleading-indentation \
                   -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT
 CXXFLAGS_WIN32	= -std=c++11 $(FLAGS_WIN32)
 CC_WIN32	= i686-w64-mingw32-gcc
@@ -147,7 +187,7 @@ OBJS_C_W32 	= $(patsubst %.c,objw32/%.o,$(SRC_GTB))
 
 # Definitions used by the "texel32old.exe" target
 CXX_WIN32OLD 	= i686-w64-mingw32-g++
-FLAGS_WIN32OLD	= -O3 -Wall -pthread $(INC) -DHAS_RT
+FLAGS_WIN32OLD	= -O3 -Wall -Wno-misleading-indentation -pthread $(INC) -DHAS_RT
 CXXFLAGS_WIN32OLD = -std=c++11 $(FLAGS_WIN32OLD)
 CC_WIN32OLD 	= i686-w64-mingw32-gcc
 CFLAGS_WIN32OLD	= $(FLAGS_WIN32OLD)
@@ -180,12 +220,13 @@ STRIP_ARM64 	= aarch64-linux-android-strip
 OBJS_ARM64 	= $(patsubst %.cpp,objarm64/%.o,$(SRC))
 OBJS_C_ARM64 	= $(patsubst %.c,objarm64/%.o,$(SRC_GTB))
 
-ALL_EXE = texel64 texel-arm texel-arm64 texel64.exe texel64amd.exe texel64old.exe texel32.exe texel32old.exe
+ALL_EXE = texel64 texel-arm texel-arm64 texel64bmi.exe texel64.exe texel64cl.exe texel64amd.exe \
+          texel64old.exe texel32.exe texel32old.exe
 TEST = texeltest
 UTIL = texelutil
 
-OBJS    = $(OBJS_32) $(OBJS_64) $(OBJS_ARM) $(OBJS_ARM64) $(OBJS_W64) $(OBJS_W64AMD) $(OBJS_W64OLD) \
-          $(OBJS_W32) $(OBJS_W32OLD) $(OBJS_DEF)
+OBJS    = $(OBJS_32) $(OBJS_64) $(OBJS_ARM) $(OBJS_ARM64) $(OBJS_W64BMI) $(OBJS_W64) $(OBJS_W64CL) \
+	  $(OBJS_W64AMD) $(OBJS_W64OLD) $(OBJS_W32) $(OBJS_W32OLD) $(OBJS_DEF)
 
 
 default : texel
@@ -193,7 +234,9 @@ all	: $(ALL_EXE) $(TEST) $(UTIL)
 
 strip   : FORCE $(ALL_EXE)
 	$(STRIP) texel64
+	$(STRIP_WINBMI) texel64bmi.exe
 	$(STRIP_WIN) texel64.exe
+	$(STRIP_WINCL) texel64cl.exe
 	$(STRIP_WINAMD) texel64amd.exe
 	$(STRIP_WINOLD) texel64old.exe
 	$(STRIP_WIN32) texel32.exe
@@ -206,20 +249,26 @@ depend	: FORCE
 	$(patsubst %.c,src/%.c,$(SRC_GTB)) $(patsubst %.cpp,test/src/%.cpp,$(SRC_TEST)) \
 	$(patsubst %.cpp,util/src/%.cpp,$(SRC_UTIL)) \
 	$(patsubst %.cpp,bookgui/src/%.cpp,$(SRC_BOOKGUI)) | \
-	sed -e 's!\(.*\):!obj64/\1 objarm/\1 objarm64/\1 objdef/\1 objw32/\1 objw32old/\1 objw64/\1 objw64amd/\1 objw64old/\1:!' >.depend
+	sed -e 's!\(.*\):!obj64/\1 objarm/\1 objarm64/\1 objdef/\1 objw32/\1 objw32old/\1 objw64bmi/\1 objw64/\1 objw64cl/\1 objw64amd/\1 objw64old/\1:!' >.depend
 
 dist	: texel.7z
 
 texel.7z: FORCE $(ALL_EXE) strip
 	(VER=$$(echo -e 'uci\nquit' | ./texel64 | grep 'id name' | awk '{print $$4}' | tr -d .) ; \
 	 rm -f texel$${VER}.7z ; \
-	 7za a texel$${VER}.7z Makefile .depend COPYING readme.txt src/*.?pp src/util/*.?pp \
+	 rm -rf texel$${VER} ; \
+	 mkdir texel$${VER} ; \
+	 cp --parents \
+		Makefile .depend COPYING readme.txt src/*.?pp src/util/*.?pp \
 		src/gtb/*.[ch] src/gtb/*.txt src/gtb/sysport/*.[ch] src/gtb/compression/*.[ch] \
 		src/gtb/compression/lzma/*.[ch] src/syzygy/*.?pp \
 		test/src/*.?pp test/cute/* util/src/*.?pp util/src/test/*.?pp util/cute/* \
 		bookgui/src/*.?pp bookgui/src/*.xml bookgui/src/ChessCases.ttf \
-		$(ALL_EXE) texelbook.bin ; \
-	7za d texel$${VER}.7z bookgui/src/resource.cpp)
+		$(ALL_EXE) texelbook.bin texel$${VER}/; \
+	 chmod -R ug+w texel$${VER} ; \
+	 rm texel$${VER}/bookgui/src/resource.cpp ; \
+	 7za a texel$${VER}.7z texel$${VER} ; \
+	 rm -rf texel$${VER})
 
 $(OBJS_DEF) : objdef/%.o : src/%.cpp
 	@mkdir -p $$(dirname $@)
@@ -282,6 +331,17 @@ texel32  : $(OBJS_32) $(OBJS_C_32) Makefile
 
 
 
+$(OBJS_W64BMI) : objw64bmi/%.o : src/%.cpp
+	@mkdir -p $$(dirname $@)
+	$(CXX_WINBMI) $(CXXFLAGS_WINBMI) -m64 -c -o $@ $<
+
+$(OBJS_C_W64BMI) : objw64bmi/%.o : src/%.c
+	@mkdir -p $$(dirname $@)
+	$(CC_WINBMI) $(CFLAGS_WINBMI) -m64 -c -o $@ $<
+
+texel64bmi.exe : $(OBJS_W64BMI) $(OBJS_C_W64BMI) Makefile
+	$(CXX_WINBMI) $(LDFLAGS_WINBMI) -m64 -o $@ $(OBJS_W64BMI) $(OBJS_C_W64BMI) -static
+
 $(OBJS_W64) : objw64/%.o : src/%.cpp
 	@mkdir -p $$(dirname $@)
 	$(CXX_WIN) $(CXXFLAGS_WIN) -m64 -c -o $@ $<
@@ -292,6 +352,17 @@ $(OBJS_C_W64) : objw64/%.o : src/%.c
 
 texel64.exe : $(OBJS_W64) $(OBJS_C_W64) Makefile
 	$(CXX_WIN) $(LDFLAGS_WIN) -m64 -o $@ $(OBJS_W64) $(OBJS_C_W64) -static
+
+$(OBJS_W64CL) : objw64cl/%.o : src/%.cpp
+	@mkdir -p $$(dirname $@)
+	$(CXX_WINCL) $(CXXFLAGS_WINCL) -m64 -c -o $@ $<
+
+$(OBJS_C_W64CL) : objw64cl/%.o : src/%.c
+	@mkdir -p $$(dirname $@)
+	$(CC_WINCL) $(CFLAGS_WINCL) -m64 -c -o $@ $<
+
+texel64cl.exe : $(OBJS_W64CL) $(OBJS_C_W64CL) Makefile
+	$(CXX_WINCL) -m64 -o $@ $(OBJS_W64CL) $(OBJS_C_W64CL) $(LDFLAGS_WINCL) -static
 
 $(OBJS_W64AMD) : objw64amd/%.o : src/%.cpp
 	@mkdir -p $$(dirname $@)
@@ -364,7 +435,8 @@ texel-arm64  : $(OBJS_ARM64) $(OBJS_C_ARM64) Makefile
 
 
 clean 	: 
-	rm -rf $(OBJS) *~ obj32 obj64 objarm objarm64 objw64 objw64amd objw64old objw32 objw32old objdef
+	rm -rf $(OBJS) *~ obj32 obj64 objarm objarm64 objw64bmi objw64 objw64cl objw64amd
+	rm -rf objw64old objw32 objw32old objdef
 	rm -rf bookgui/src/resource.cpp
 
 .PHONY	: clean dist FORCE

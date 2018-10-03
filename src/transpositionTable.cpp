@@ -27,6 +27,7 @@
 #include "position.hpp"
 #include "moveGen.hpp"
 #include "textio.hpp"
+#include "largePageAlloc.hpp"
 
 #include <iostream>
 #include <iomanip>
@@ -35,34 +36,48 @@ using namespace std;
 
 
 TranspositionTable::TranspositionTable(int log2Size)
-    : ttStorage(*this) {
+    : table(nullptr), tableSize(0), ttStorage(*this) {
     reSize(log2Size);
 }
 
 void
 TranspositionTable::reSize(int log2Size) {
     const size_t numEntries = ((size_t)1) << log2Size;
-    table.resize(numEntries);
-    generation = 0;
 
-    setHashMask(table.size());
+    tableV.clear();
+    tableLP.reset();
+    table = nullptr;
+    tableSize = 0;
+
+    tableLP = LargePageAlloc::allocate<TTEntryStorage>(numEntries);
+    if (tableLP) {
+        table = tableLP.get();
+    } else {
+        tableV.resize(numEntries);
+        table = &tableV[0];
+    }
+    tableSize = numEntries;
+
+    generation = 0;
+    setHashMask(tableSize);
     tbGen.reset();
     notUsedCnt = 0;
 }
 
 void
 TranspositionTable::clear() {
-    setHashMask(table.size());
+    setHashMask(tableSize);
     tbGen.reset();
     notUsedCnt = 0;
     TTEntry ent;
     ent.clear();
-    for (size_t i = 0; i < table.size(); i++)
+    for (size_t i = 0; i < tableSize; i++)
         ent.store(table[i]);
 }
 
 void
-TranspositionTable::insert(U64 key, const Move& sm, int type, int ply, int depth, int evalScore) {
+TranspositionTable::insert(U64 key, const Move& sm, int type, int ply, int depth, int evalScore,
+                           bool busy) {
     if (depth < 0) depth = 0;
     size_t idx0 = getIndex(key);
     U64 key2 = getStoredKey(key);
@@ -85,13 +100,15 @@ TranspositionTable::insert(U64 key, const Move& sm, int type, int ply, int depth
         }
     }
     bool doStore = true;
-    if ((ent.getKey() == key2) && (ent.getDepth() > depth) && (ent.getType() == type)) {
-        if (type == TType::T_EXACT)
-            doStore = false;
-        else if ((type == TType::T_GE) && (sm.score() <= ent.getScore(ply)))
-            doStore = false;
-        else if ((type == TType::T_LE) && (sm.score() >= ent.getScore(ply)))
-            doStore = false;
+    if (!busy) {
+        if ((ent.getKey() == key2) && (ent.getDepth() > depth) && (ent.getType() == type)) {
+            if (type == TType::T_EXACT)
+                doStore = false;
+            else if ((type == TType::T_GE) && (sm.score() <= ent.getScore(ply)))
+                doStore = false;
+            else if ((type == TType::T_LE) && (sm.score() >= ent.getScore(ply)))
+                doStore = false;
+        }
     }
     if (doStore) {
         if ((ent.getKey() != key2) || (sm.from() != sm.to()))
@@ -99,11 +116,24 @@ TranspositionTable::insert(U64 key, const Move& sm, int type, int ply, int depth
         ent.setKey(key2);
         ent.setScore(sm.score(), ply);
         ent.setDepth(depth);
+        ent.setBusy(busy);
         ent.setGeneration((S8)generation);
         ent.setType(type);
         ent.setEvalScore(evalScore);
         ent.store(table[idx]);
     }
+}
+
+void
+TranspositionTable::setBusy(const TTEntry& ent, int ply) {
+    U64 key = ent.getKey();
+    int type = ent.getType();
+    int depth = ent.getDepth();
+    int evalScore = ent.getEvalScore();
+    Move sm;
+    ent.getMove(sm);
+    sm.setScore(ent.getScore(ply));
+    insert(key, sm, type, ply, depth, evalScore, true);
 }
 
 void
@@ -189,7 +219,7 @@ TranspositionTable::printStats(int rootDepth) const {
     int unused = 0;
     int thisGen = 0;
     std::vector<int> depHist;
-    for (size_t i = 0; i < table.size(); i++) {
+    for (size_t i = 0; i < tableSize; i++) {
         TTEntry ent;
         ent.load(table[i]);
         if (ent.getType() == TType::T_EMPTY) {
@@ -203,10 +233,10 @@ TranspositionTable::printStats(int rootDepth) const {
             depHist[d]++;
         }
     }
-    double w = 100.0 / table.size();
+    double w = 100.0 / tableSize;
     std::stringstream ss;
     ss.precision(2);
-    ss << std::fixed << "hstat: d:" << rootDepth << " size:" << table.size()
+    ss << std::fixed << "hstat: d:" << rootDepth << " size:" << tableSize
        << " unused:" << unused << " (" << (unused*w) << "%)"
        << " thisGen:" << thisGen << " (" << (thisGen*w) << "%)" << std::endl;
     cout << ss.str();
@@ -223,6 +253,21 @@ TranspositionTable::printStats(int rootDepth) const {
     }
 }
 
+int
+TranspositionTable::getHashFull() const {
+    if (tableSize < 1000)
+        return 0;
+    int hashFull = 0;
+    for (int i = 0; i < 1000; i++) {
+        TTEntry ent;
+        ent.load(table[i]);
+        if ((ent.getType() != TType::T_EMPTY) &&
+            (ent.getGeneration() == generation))
+            hashFull++;
+    }
+    return hashFull;
+}
+
 // --------------------------------------------------------------------------------
 
 bool
@@ -231,7 +276,7 @@ TranspositionTable::updateTB(const Position& pos, RelaxedShared<S64>& maxTimeMil
         pos.pieceTypeBB(Piece::WPAWN, Piece::BPAWN)) { // pos not suitable for TB generation
         if (tbGen && notUsedCnt++ > 3) {
             tbGen.reset();
-            setHashMask(table.size());
+            setHashMask(tableSize);
             notUsedCnt = 0;
         }
         return tbGen != nullptr;
@@ -247,7 +292,7 @@ TranspositionTable::updateTB(const Position& pos, RelaxedShared<S64>& maxTimeMil
     if (maxTimeMillis >= 0 && maxTimeMillis < requiredTime)
         return false; // Not enough time to generate TB
 
-    U64 ttSize = table.size() * 16;
+    U64 ttSize = tableSize * sizeof(TTEntryStorage);
     if (ttSize < 8 * 1024 * 1024)
         return false; // Need at least 5MB for TB storage
 
@@ -270,13 +315,13 @@ TranspositionTable::updateTB(const Position& pos, RelaxedShared<S64>& maxTimeMil
         return false;
     }
     int shift = (ttSize < 16 * 1024 * 1024) ? 2 : 1;
-    setHashMask(table.size() >> shift);
-    hashMask = (table.size() - 1) >> shift;
+    setHashMask(tableSize >> shift);
+    hashMask = (tableSize - 1) >> shift;
     notUsedCnt = 0;
     return true;
 }
 
 bool
-TranspositionTable::probeDTM(const Position& pos, int ply, int& score) {
+TranspositionTable::probeDTM(const Position& pos, int ply, int& score) const {
     return tbGen && tbGen->probeDTM(pos, ply, score);
 }

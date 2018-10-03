@@ -25,12 +25,16 @@
 
 #include "chesstool.hpp"
 #include "search.hpp"
+#include "clustertt.hpp"
+#include "history.hpp"
+#include "killerTable.hpp"
 #include "textio.hpp"
 #include "gametree.hpp"
 #include "computerPlayer.hpp"
 #include "syzygy/rtb-probe.hpp"
 #include "tbprobe.hpp"
 #include "stloutput.hpp"
+#include "util/timeUtil.hpp"
 
 #include <queue>
 #include <unordered_set>
@@ -128,19 +132,20 @@ const int UNKNOWN_SCORE = -32767; // Represents unknown static eval score
 
 void
 ChessTool::pgnToFen(std::istream& is, int everyNth) {
-    static std::vector<U64> nullHist(200);
+    static std::vector<U64> nullHist(SearchConst::MAX_SEARCH_DEPTH * 2);
     static TranspositionTable tt(19);
-    static ParallelData pd(tt);
+    Notifier notifier;
+    ThreadCommunicator comm(nullptr, tt, notifier, false);
     static KillerTable kt;
     static History ht;
     static auto et = Evaluate::getEvalHashTables();
-    static Search::SearchTables st(tt, kt, ht, *et);
+    static Search::SearchTables st(comm.getCTT(), kt, ht, *et);
     static TreeLogger treeLog;
     Random rnd;
 
     Position pos;
     const int mate0 = SearchConst::MATE0;
-    Search sc(pos, nullHist, 0, st, pd, nullptr, treeLog);
+    Search sc(pos, nullHist, 0, st, comm, treeLog);
 
     PgnReader reader(is);
     GameTree gt;
@@ -193,6 +198,39 @@ ChessTool::fenToPgn(std::istream& is) {
     for (const std::string& line : lines) {
         Position pos(TextIO::readFEN(line));
         writePGN(pos);
+    }
+}
+
+void
+ChessTool::movesToFen(std::istream& is) {
+    std::vector<std::string> lines = readStream(is);
+    Position startPos(TextIO::readFEN(TextIO::startPosFEN));
+    std::vector<std::string> words;
+    for (const std::string& line : lines) {
+        Position pos(startPos);
+        UndoInfo ui;
+        words.clear();
+        splitString(line, words);
+        bool inSequence = true;
+        bool fenPrinted = false;
+        for (const std::string& word : words) {
+            if (inSequence) {
+                Move move = TextIO::stringToMove(pos, word);
+                if (move.isEmpty()) {
+                    inSequence = false;
+                    std::cout << TextIO::toFEN(pos);
+                    fenPrinted = true;
+                } else {
+                    pos.makeMove(move, ui);
+                }
+            }
+            if (!inSequence) {
+                std::cout << ' ' << word;
+            }
+        }
+        if (!fenPrinted)
+            std::cout << TextIO::toFEN(pos);
+        std::cout << std::endl;
     }
 }
 
@@ -968,9 +1006,7 @@ ChessTool::printParams() {
     os << "RvsBPBonus           : " << RvsBPBonus << std::endl;
 
     os << "pawnTradePenalty    : " << pawnTradePenalty << std::endl;
-    os << "pieceTradeBonus     : " << pieceTradeBonus << std::endl;
     os << "pawnTradeThreshold  : " << pawnTradeThreshold << std::endl;
-    os << "pieceTradeThreshold : " << pieceTradeThreshold << std::endl;
 
     os << "threatBonus1     : " << threatBonus1 << std::endl;
     os << "threatBonus2     : " << threatBonus2 << std::endl;
@@ -1197,9 +1233,7 @@ ChessTool::patchParams(const std::string& directory) {
     replaceValue(RvsBPBonus,   "RvsBPBonus", hppFile);
 
     replaceValue(pawnTradePenalty, "pawnTradePenalty", hppFile);
-    replaceValue(pieceTradeBonus, "pieceTradeBonus", hppFile);
     replaceValue(pawnTradeThreshold, "pawnTradeThreshold", hppFile);
-    replaceValue(pieceTradeThreshold, "pieceTradeThreshold", hppFile);
 
     replaceValue(threatBonus1, "threatBonus1", hppFile);
     replaceValue(threatBonus2, "threatBonus2", hppFile);
@@ -1510,9 +1544,10 @@ ChessTool::qEval(std::vector<PositionInfo>& positions) {
 void
 ChessTool::qEval(std::vector<PositionInfo>& positions, const int beg, const int end) {
     TranspositionTable tt(19);
-    ParallelData pd(tt);
+    Notifier notifier;
+    ThreadCommunicator comm(nullptr, tt, notifier, false);
 
-    std::vector<U64> nullHist(200);
+    std::vector<U64> nullHist(SearchConst::MAX_SEARCH_DEPTH * 2);
     KillerTable kt;
     History ht;
     std::shared_ptr<Evaluate::EvalHashTables> et;
@@ -1521,14 +1556,14 @@ ChessTool::qEval(std::vector<PositionInfo>& positions, const int beg, const int 
 
     const int chunkSize = 5000;
 
-#pragma omp parallel for default(none) shared(positions,tt,pd) private(kt,ht,et,treeLog,pos) firstprivate(nullHist)
+#pragma omp parallel for default(none) shared(positions,tt,comm) private(kt,ht,et,treeLog,pos) firstprivate(nullHist)
     for (int c = beg; c < end; c += chunkSize) {
         if (!et)
             et = Evaluate::getEvalHashTables();
-        Search::SearchTables st(tt, kt, ht, *et);
+        Search::SearchTables st(comm.getCTT(), kt, ht, *et);
 
         const int mate0 = SearchConst::MATE0;
-        Search sc(pos, nullHist, 0, st, pd, nullptr, treeLog);
+        Search sc(pos, nullHist, 0, st, comm, treeLog);
 
         for (int i = 0; i < chunkSize; i++) {
             if (c + i >= end)
@@ -1664,7 +1699,8 @@ ChessTool::staticScoreMoveListQuiet(Position& pos, Evaluate& eval, MoveList& mov
         }
         score += prevHang * moHangPenalty1 / 32;
 
-        int seeScore = Search::SEE(pos, m);
+        const int mate0 = SearchConst::MATE0;
+        int seeScore = Search::SEE(pos, m, -mate0, mate0);
         score += seeScore * moSeeBonus / 32;
 
         pos.makeMove(m, ui);
@@ -1703,35 +1739,36 @@ ChessTool::probeDTZ(const std::string& fen) {
     else
         std::cout << "---";
 
+    auto printScore = [](bool ok, const TranspositionTable::TTEntry& ent, int score) {
+        if (ok) {
+            std::cout << score;
+            if (score == 0) {
+                std::cout << " (" << ent.getEvalScore() << ")";
+            } else {
+                using namespace SearchConst;
+                if (isWinScore(score)) {
+                    std::cout << " (M" << (MATE0 - score) / 2 << ")";
+                } else if (isLoseScore(score)) {
+                    std::cout << " (-M" << ((MATE0 + score - 1) / 2) << ")";
+                }
+            }
+        } else {
+            std::cout << "---";
+        }
+    };
+
     int score = 0;
     TranspositionTable::TTEntry ent;
     bool ok = TBProbe::rtbProbeDTZ(pos, 0, score, ent);
     std::cout << " dtz:";
-    if (ok) {
-        std::cout << score;
-        if (score == 0) {
-            std::cout << " (" << ent.getEvalScore() << ")";
-        }
-    } else {
-        std::cout << "---";
-    }
+    printScore(ok, ent, score);
 
     ok = TBProbe::rtbProbeWDL(pos, 0, score, ent);
     std::cout << " wdl:";
-    if (ok) {
-        std::cout << score;
-        if (score == 0) {
-            std::cout << " (" << ent.getEvalScore() << ")";
-        }
-    } else {
-        std::cout << "---";
-    }
+    printScore(ok, ent, score);
 
     ok = TBProbe::gtbProbeDTM(pos, 0, score);
     std::cout << " dtm:";
-    if (ok)
-        std::cout << score;
-    else
-        std::cout << "---";
+    printScore(ok, ent, score);
     std::cout << std::endl;
 }
