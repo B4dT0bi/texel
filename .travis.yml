@@ -34,6 +34,7 @@ install:
   # verify installed versions
   - which g++
   - g++ -v
+  - pwd
 
 script:
   - make clean
@@ -44,3 +45,6 @@ script:
 
 after_success:
   - coveralls --exclude objdef --exclude objdeftest --exclude test --exclude util --exclude bookgui --gcov-options '\-lp -o objdeftest/'  
+  - pwd
+  - ls
+  - ls objdeftest
