@@ -81,6 +81,7 @@ usage() {
     std::cerr << "Usage: texelutil [-iv file] [-e] [-moveorder] cmd params\n";
     std::cerr << " -iv file : Set initial parameter values\n";
     std::cerr << " -e : Use cross entropy error function\n";
+    std::cerr << " -s : Use search score instead of game result\n";
     std::cerr << " -moveorder : Optimize static move ordering\n";
     std::cerr << "cmd is one of:\n";
     std::cerr << " test : Run CUTE tests\n";
@@ -94,6 +95,8 @@ usage() {
     std::cerr << "                                     -m treat bishop and knight as same type\n";
     std::cerr << "        mtrl [-m] wQ wR wB [wN] wP bQ bR bB [bN] bP : material satisfies pattern\n";
     std::cerr << "                                     -m treat bishop and knight as same type\n";
+    std::cerr << " search script nWorkers: Update search score in FEN file by running script\n";
+    std::cerr << "                         on all lines. Run nWorkers scripts in parallel\n";
     std::cerr << " outliers threshold  : Print positions with unexpected game result\n";
     std::cerr << " evaleffect evalfile : Print eval improvement when parameters are changed\n";
     std::cerr << " pawnadv  : Compute evaluation error for different pawn advantage\n";
@@ -239,6 +242,7 @@ main(int argc, char* argv[]) {
         ComputerPlayer::initEngine();
         bool useEntropyErrorFunction = false;
         bool optimizeMoveOrdering = false;
+        bool useSearchScore = false;
         while (true) {
             if ((argc >= 3) && (std::string(argv[1]) == "-iv")) {
                 setInitialValues(argv[2]);
@@ -246,6 +250,10 @@ main(int argc, char* argv[]) {
                 argv += 2;
             } else if ((argc >= 2) && (std::string(argv[1]) == "-e")) {
                 useEntropyErrorFunction = true;
+                argc -= 1;
+                argv += 1;
+            } else if ((argc >= 2) && (std::string(argv[1]) == "-s")) {
+                useSearchScore = true;
                 argc -= 1;
                 argv += 1;
             } else if ((argc >= 2) && (std::string(argv[1]) == "-moveorder")) {
@@ -259,7 +267,7 @@ main(int argc, char* argv[]) {
             usage();
 
         std::string cmd = argv[1];
-        ChessTool chessTool(useEntropyErrorFunction, optimizeMoveOrdering);
+        ChessTool chessTool(useEntropyErrorFunction, optimizeMoveOrdering, useSearchScore);
         if (cmd == "test") {
             testMode = true;
         } else if (cmd == "p2f") {
@@ -328,6 +336,14 @@ main(int argc, char* argv[]) {
                 chessTool.filterTotalMaterial(std::cin, minorEqual, mtrlPattern);
             } else
                 usage();
+        } else if (cmd == "search") {
+            if (argc != 4)
+                usage();
+            std::string script = argv[2];
+            int nWorkers;
+            if (!str2Num(argv[3], nWorkers))
+                usage();
+            chessTool.computeSearchScores(std::cin, script, nWorkers);
         } else if (cmd == "outliers") {
             int threshold;
             if ((argc < 3) || !str2Num(argv[2], threshold))

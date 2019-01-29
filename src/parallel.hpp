@@ -460,7 +460,7 @@ WorkerThread::getNumWorkers() const {
 
 inline bool
 WorkerThread::shouldStop(int jobId) const {
-    return (this->jobId != jobId) || terminate;
+    return this->jobId != jobId;
 }
 
 inline void

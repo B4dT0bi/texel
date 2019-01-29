@@ -30,15 +30,18 @@
 #include "killerTable.hpp"
 #include "textio.hpp"
 #include "gametree.hpp"
+#include "threadpool.hpp"
 #include "computerPlayer.hpp"
 #include "syzygy/rtb-probe.hpp"
 #include "tbprobe.hpp"
 #include "stloutput.hpp"
 #include "util/timeUtil.hpp"
+#include "util/logger.hpp"
 
 #include <queue>
 #include <unordered_set>
 #include <unistd.h>
+#include <stdio.h>
 
 
 // Static move ordering parameters
@@ -89,9 +92,38 @@ ScoreToProb::getLogProb(int score) const {
 
 // --------------------------------------------------------------------------------
 
-ChessTool::ChessTool(bool useEntropyErr, bool optMoveOrder)
+static bool strContains(const std::string& str, const std::string& sub) {
+    return str.find(sub) != std::string::npos;
+}
+
+static int
+findLine(const std::string start, const std::string& contain, const std::vector<std::string>& lines) {
+    for (int i = 0; i < (int)lines.size(); i++) {
+        const std::string& line = lines[i];
+        if (startsWith(line, start) && strContains(line, contain))
+            return i;
+    }
+    return -1;
+}
+
+static std::vector<std::string> splitLines(const std::string& lines) {
+    std::vector<std::string> ret;
+    int start = 0;
+    for (int i = 0; i < (int)lines.size(); i++) {
+        if (lines[i] == '\n') {
+            ret.push_back(lines.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    return ret;
+}
+
+// --------------------------------------------------------------------------------
+
+ChessTool::ChessTool(bool useEntropyErr, bool optMoveOrder, bool useSearchScore)
     : useEntropyErrorFunction(useEntropyErr),
-      optimizeMoveOrdering(optMoveOrder) {
+      optimizeMoveOrdering(optMoveOrder),
+      useSearchScore(useSearchScore) {
 
     moEvalWeight.registerParam("MoveOrderEvalWeight", Parameters::instance());
     moHangPenalty1.registerParam("MoveOrderHangPenalty1", Parameters::instance());
@@ -449,6 +481,99 @@ ChessTool::outliers(std::istream& is, int threshold) {
         }
     }
     std::cout << std::flush;
+}
+
+void
+ChessTool::computeSearchScores(std::istream& is, const std::string& script, int nWorkers) {
+    std::vector<PositionInfo> positions;
+    readFENFile(is, positions);
+    int nPos = positions.size();
+
+    std::atomic<bool> error(false);
+
+    const int batchSize = 1000;
+    struct Result {
+        int beginIdx;
+        int endIdx;
+        std::array<int,batchSize> scores;
+    };
+    ThreadPool<Result> pool(nWorkers);
+    for (int i = 0; i < nPos; i += batchSize) {
+        Result r;
+        r.beginIdx = i;
+        r.endIdx = std::min(i + batchSize, nPos);
+        auto func = [&script,&positions,r,&error](int workerNo) mutable {
+            if (error)
+                return r;
+            std::string cmdLine = "\"" + script + "\"";
+            cmdLine += " " + num2Str(workerNo);
+            Position pos;
+            for (int i = r.beginIdx; i < r.endIdx; i++) {
+                pos.deSerialize(positions[i].posData);
+                std::string fen = TextIO::toFEN(pos);
+                cmdLine += " \"" + fen + "\"";
+            }
+            std::shared_ptr<FILE> f(popen(cmdLine.c_str(), "r"),
+                                    [](FILE* f) { pclose(f); });
+            std::string s;
+            char buf[256];
+            while (fgets(buf, sizeof(buf), f.get()))
+                s += buf;
+            std::vector<std::string> lines = splitLines(s);
+            int nLines = lines.size();
+            if (nLines != r.endIdx - r.beginIdx) {
+                error.store(true);
+                std::cerr << "Script failed: " << s << std::endl;
+                return r;
+            }
+            for (int i = 0; i < nLines; i++) {
+                if (!str2Num(lines[i], r.scores[i])) {
+                    error.store(true);
+                    std::cerr << "Not a number: " << lines[i] << std::endl;
+                    return r;
+                }
+
+            }
+            return r;
+        };
+        pool.addTask(func);
+    }
+
+    const int nBatches = (nPos - 1) / batchSize + 1;
+    std::vector<bool> finished(nBatches, false);
+    Position pos;
+    for (int b = 0; b < nBatches; b++) {
+        if (finished[b]) {
+            int i0 = b * batchSize;
+            int i1 = std::min((b + 1) * batchSize, nPos);
+            for (int i = i0; i < i1; i++) {
+                const PositionInfo& pi = positions[i];
+                pos.deSerialize(pi.posData);
+                std::string fen = TextIO::toFEN(pos);
+                std::cout << fen << " : " << pi.result << " : " << pi.searchScore << " : " << pi.qScore
+                          << " : " << pi.gameNo << '\n';
+            }
+            std::cout << std::flush;
+        } else {
+            Result r;
+            if (!pool.getResult(r)) {
+                std::cerr << "No result available" << std::endl;
+                exit(2);
+            }
+            if (error)
+                break;
+            int nScores = r.endIdx - r.beginIdx;
+
+            Position pos;
+            for (int i = 0; i < nScores; i++) {
+                pos.deSerialize(positions[r.beginIdx + i].posData);
+                int c = pos.isWhiteMove() ? 1 : -1;
+                positions[r.beginIdx + i].searchScore = r.scores[i] * c;
+            }
+            finished[r.beginIdx / batchSize] = true;
+            b--;
+        }
+    }
 }
 
 void
@@ -1058,32 +1183,6 @@ ChessTool::printParams() {
     os << "moSeeBonus     : " << moSeeBonus << std::endl;
 }
 
-static bool strContains(const std::string& str, const std::string& sub) {
-    return str.find(sub) != std::string::npos;
-}
-
-static int
-findLine(const std::string start, const std::string& contain, const std::vector<std::string>& lines) {
-    for (int i = 0; i < (int)lines.size(); i++) {
-        const std::string& line = lines[i];
-        if (startsWith(line, start) && strContains(line, contain))
-            return i;
-    }
-    return -1;
-}
-
-std::vector<std::string> splitLines(const std::string& lines) {
-    std::vector<std::string> ret;
-    int start = 0;
-    for (int i = 0; i < (int)lines.size(); i++) {
-        if (lines[i] == '\n') {
-            ret.push_back(lines.substr(start, i - start));
-            start = i + 1;
-        }
-    }
-    return ret;
-}
-
 template <int N>
 static void
 replaceTableNxN(const ParamTable<N*N>& pt, const std::string& name,
@@ -1602,6 +1701,12 @@ ChessTool::computeAvgError(const std::vector<PositionInfo>& positions, const Sco
             errSum += err;
         }
         return errSum / positions.size();
+    } else if (useSearchScore) {
+        for (const PositionInfo& pi : positions) {
+            double err = sp.getProb(pi.qScore) - sp.getProb(pi.searchScore);
+            errSum += err * err;
+        }
+        return sqrt(errSum / positions.size());
     } else {
         for (const PositionInfo& pi : positions) {
             double p = sp.getProb(pi.qScore);

@@ -69,6 +69,12 @@ Strength
   Strength can be smoothly adjusted between playing random legal moves (0) and
   playing at full strength (1000).
 
+MaxNPS
+
+  If set to a value larger than 0, Texel will not search faster than this many
+  nodes per second. This can be used as an alternative to or in combination with
+  the Strength parameter to reduce the playing strength.
+
 Threads
 
   Texel can use multiple CPUs and cores using threads. Up to 64 threads are

@@ -148,6 +148,9 @@ EngineMainThread::startSearch(EngineControl* engineControl,
                               int maxPV, int minProbeDepth,
                               std::atomic<bool>& ponder, std::atomic<bool>& infinite) {
     int nThreads = UciParams::threads->getIntPar();
+    if ((UciParams::strength->getIntPar() < 1000) ||
+        (UciParams::maxNPS->getIntPar() > 0))
+        nThreads = 1;
     int nThreadsThisNode;
     std::vector<int> nThreadsChildren;
     Cluster::instance().assignThreads(nThreads, nThreadsThisNode, nThreadsChildren);
@@ -340,9 +343,6 @@ EngineControl::newGame() {
     setOption("Clear Hash", "");
 }
 
-/**
- * Compute thinking time for current search.
- */
 void
 EngineControl::computeTimeLimit(const SearchParams& sPar) {
     minTimeLimit = -1;
@@ -398,7 +398,8 @@ EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int earlyStopPerc
     Search::SearchTables st(comm->getCTT(), kt, ht, *et);
     sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, *comm, treeLog);
     sc->setListener(listener);
-    sc->setStrength(UciParams::strength->getIntPar(), randomSeed);
+    sc->setStrength(UciParams::strength->getIntPar(), randomSeed,
+                    UciParams::maxNPS->getIntPar());
     std::shared_ptr<MoveList> moves(std::make_shared<MoveList>());
     MoveGen::pseudoLegalMoves(pos, *moves);
     MoveGen::removeIllegal(pos, *moves);
@@ -469,9 +470,6 @@ EngineControl::setupPosition(Position pos, const std::vector<Move>& moves) {
     this->pos = pos;
 }
 
-/**
- * Try to find a move to ponder from the transposition table.
- */
 Move
 EngineControl::getPonderMove(Position pos, const Move& m) {
     Move ret;

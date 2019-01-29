@@ -79,8 +79,11 @@ public:
      * @param useEntropyErrorFunction  Use entropy error function instead of LSQ
      *                                 in optimization objective function.
      * @param optmizeMoveOrdering  If true, optimize static move ordering parameters
-     *                             instead of evaluation function parameters. */
-    ChessTool(bool useEntropyErrorFunction, bool optimizeMoveOrdering);
+     *                             instead of evaluation function parameters.
+     * @param useSearchScore       If true, use the search score instead of
+     *                             the game result when optimizing. */
+    ChessTool(bool useEntropyErrorFunction, bool optimizeMoveOrdering,
+              bool useSearchScore);
 
     /** Setup tablebase directory paths. */
     static void setupTB();
@@ -122,6 +125,10 @@ public:
 
     /** Print positions where abs(qScore) >= threshold and game result != (1+sign(qScore))/2. */
     void outliers(std::istream& is, int threshold);
+
+    /** In a FEN file, update the search score in each line by running a script to get the new score.
+     *  Use "nWorkers" worker threads. */
+    void computeSearchScores(std::istream& is, const std::string& script, int nWorkers);
 
     /** Print how much position evaluation improves when parValues are applied to evaluation function.
      * Positions with no change are not printed. */
@@ -211,6 +218,7 @@ private:
 
     bool useEntropyErrorFunction;
     bool optimizeMoveOrdering;
+    bool useSearchScore;
 };
 
 
