@@ -32,7 +32,6 @@ namespace UciParams {
     std::shared_ptr<Parameters::StringParam> bookFile(std::make_shared<Parameters::StringParam>("BookFile", ""));
     std::shared_ptr<Parameters::CheckParam> ponder(std::make_shared<Parameters::CheckParam>("Ponder", false));
     std::shared_ptr<Parameters::CheckParam> analyseMode(std::make_shared<Parameters::CheckParam>("UCI_AnalyseMode", false));
-    std::shared_ptr<Parameters::StringParam> opponent(std::make_shared<Parameters::StringParam>("UCI_Opponent", ""));
     std::shared_ptr<Parameters::SpinParam> strength(std::make_shared<Parameters::SpinParam>("Strength", 0, 1000, 1000));
     std::shared_ptr<Parameters::SpinParam> maxNPS(std::make_shared<Parameters::SpinParam>("MaxNPS", 0, 10000000, 0));
 #ifdef CLUSTER
@@ -47,6 +46,9 @@ namespace UciParams {
 
     std::shared_ptr<Parameters::SpinParam> contempt(std::make_shared<Parameters::SpinParam>("Contempt", -2000, 2000, 0));
     std::shared_ptr<Parameters::SpinParam> analyzeContempt(std::make_shared<Parameters::SpinParam>("AnalyzeContempt", -2000, 2000, 0));
+    std::shared_ptr<Parameters::CheckParam> autoContempt(std::make_shared<Parameters::CheckParam>("AutoContempt", false));
+    std::shared_ptr<Parameters::StringParam> contemptFile(std::make_shared<Parameters::StringParam>("ContemptFile", ""));
+    std::shared_ptr<Parameters::StringParam> opponent(std::make_shared<Parameters::StringParam>("UCI_Opponent", ""));
 
     std::shared_ptr<Parameters::StringParam> gtbPath(std::make_shared<Parameters::StringParam>("GaviotaTbPath", ""));
     std::shared_ptr<Parameters::SpinParam> gtbCache(std::make_shared<Parameters::SpinParam>("GaviotaTbCache", 1, 2047, 1));
@@ -113,8 +115,6 @@ DEFINE_PARAM(kingSafetyWeight2);
 DEFINE_PARAM(kingSafetyWeight3);
 DEFINE_PARAM(kingSafetyWeight4);
 DEFINE_PARAM(kingSafetyThreshold);
-DEFINE_PARAM(knightKingProtectBonus);
-DEFINE_PARAM(bishopKingProtectBonus);
 DEFINE_PARAM(pawnStormBonus);
 
 DEFINE_PARAM(tempoBonusMG);
@@ -569,6 +569,10 @@ ParamTable<9> pawnStormTable { -400, 100, useUciParam,
     {-105,-47,-262, 43, 55,  9, 13,-15,-13 },
     {  1,   2,   3,  4,  5,  6,  7,  8,  9 }
 };
+ParamTable<4> pawnStormMissingPenalty { -400, 100, useUciParam,
+    {  0, 20, 70, 90 },
+    {  0,  1,  2,  3 }
+};
 
 ParamTable<14> kingAttackWeight { 0, 400, useUciParam,
     {  0,  3,  0,  6,  6, 13, 25, 47, 62, 97,104,147,207,321 },
@@ -625,7 +629,6 @@ Parameters::Parameters() {
     addPar(UciParams::bookFile);
     addPar(UciParams::ponder);
     addPar(UciParams::analyseMode);
-    addPar(UciParams::opponent);
     addPar(UciParams::strength);
     addPar(UciParams::maxNPS);
     addPar(UciParams::threads);
@@ -634,6 +637,9 @@ Parameters::Parameters() {
     addPar(UciParams::useNullMove);
     addPar(UciParams::contempt);
     addPar(UciParams::analyzeContempt);
+    addPar(UciParams::autoContempt);
+    addPar(UciParams::contemptFile);
+    addPar(UciParams::opponent);
 
     addPar(UciParams::gtbPath);
     addPar(UciParams::gtbCache);
@@ -697,8 +703,6 @@ Parameters::Parameters() {
     REGISTER_PARAM(kingSafetyWeight3, "KingSafetyWeight3");
     REGISTER_PARAM(kingSafetyWeight4, "KingSafetyWeight4");
     REGISTER_PARAM(kingSafetyThreshold, "KingSafetyThreshold");
-    REGISTER_PARAM(knightKingProtectBonus, "KnightKingProtectBonus");
-    REGISTER_PARAM(bishopKingProtectBonus, "BishopKingProtectBonus");
     REGISTER_PARAM(pawnStormBonus, "PawnStormBonus");
 
     REGISTER_PARAM(tempoBonusMG, "TempoBonusMG");
@@ -757,6 +761,7 @@ Parameters::Parameters() {
     castleFactor.registerParams("CastleFactor", *this);
     pawnShelterTable.registerParams("PawnShelterTable", *this);
     pawnStormTable.registerParams("PawnStormTable", *this);
+    pawnStormMissingPenalty.registerParams("PawnStormMissingPenalty", *this);
     kingAttackWeight.registerParams("KingAttackWeight", *this);
     qContactCheckBonus.registerParams("QueenContactCheckBonus", *this);
     pieceKingAttackBonus.registerParams("PieceKingAttackBonus", *this);

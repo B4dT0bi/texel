@@ -73,7 +73,7 @@ MaxNPS
 
   If set to a value larger than 0, Texel will not search faster than this many
   nodes per second. This can be used as an alternative to or in combination with
-  the Strength parameter to reduce the playing strength.
+  the Strength option to reduce the playing strength.
 
 Threads
 
@@ -109,6 +109,24 @@ AnalyzeContempt
   draw, you can set AnalyzeContempt to a negative value, such as -50. The
   analysis will then take into account that white "wants" a draw, even when you
   are analyzing a position where it is black's turn to move.
+
+AutoContempt
+
+  When AutoContempt is set to true, the Contempt option is ignored and the
+  contempt value during game play is instead determined based on the opponent as
+  defined by the ContemptFile option.
+
+ContemptFile
+
+  Used when AutoContempt is set to true. Specifies the path to the text file
+  that defines what contempt value to use for a given opponent. Each line in the
+  file has the format regex <tab> contempt. The regular expression has the C++
+  ECMAScript format, see http://en.cppreference.com/w/cpp/regex/ecmascript.
+  The regular expression is matched against the value of the UCI_Opponent
+  option, which should be set automatically by the GUI.
+  Example:
+  \w+ \w+ \w+ AlphaZero.*	-100
+  .*				0
 
 GaviotaTbPath
 

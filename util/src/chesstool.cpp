@@ -1093,6 +1093,7 @@ ChessTool::printParams() {
     printTable(castleFactor, "castleFactor", os);
     printTable(pawnShelterTable, "pawnShelterTable", os);
     printTable(pawnStormTable, "pawnStormTable", os);
+    printTable(pawnStormMissingPenalty, "pawnStormMissingPenalty", os);
     printTable(kingAttackWeight, "kingAttackWeight", os);
     printTable(qContactCheckBonus, "qContactCheckBonus", os);
     printTable(pieceKingAttackBonus, "pieceKingAttackBonus", os);
@@ -1156,8 +1157,6 @@ ChessTool::printParams() {
     os << "kingSafetyWeight3         : " << kingSafetyWeight3 << std::endl;
     os << "kingSafetyWeight4         : " << kingSafetyWeight4 << std::endl;
     os << "kingSafetyThreshold       : " << kingSafetyThreshold << std::endl;
-    os << "knightKingProtectBonus    : " << knightKingProtectBonus << std::endl;
-    os << "bishopKingProtectBonus    : " << bishopKingProtectBonus << std::endl;
     os << "pawnStormBonus            : " << pawnStormBonus << std::endl;
 
     os << "tempoBonusMG : " << tempoBonusMG << std::endl;
@@ -1297,6 +1296,7 @@ ChessTool::patchParams(const std::string& directory) {
     replaceTable(castleFactor, "castleFactor", cppFile);
     replaceTable(pawnShelterTable, "pawnShelterTable", cppFile);
     replaceTable(pawnStormTable, "pawnStormTable", cppFile);
+    replaceTable(pawnStormMissingPenalty, "pawnStormMissingPenalty", cppFile);
     replaceTable(kingAttackWeight, "kingAttackWeight", cppFile);
     replaceTable(qContactCheckBonus, "qContactCheckBonus", cppFile);
     replaceTable(pieceKingAttackBonus, "pieceKingAttackBonus", cppFile);
@@ -1360,8 +1360,6 @@ ChessTool::patchParams(const std::string& directory) {
     replaceValue(kingSafetyWeight3, "kingSafetyWeight3", hppFile);
     replaceValue(kingSafetyWeight4, "kingSafetyWeight4", hppFile);
     replaceValue(kingSafetyThreshold, "kingSafetyThreshold", hppFile);
-    replaceValue(knightKingProtectBonus, "knightKingProtectBonus", hppFile);
-    replaceValue(bishopKingProtectBonus, "bishopKingProtectBonus", hppFile);
     replaceValue(pawnStormBonus, "pawnStormBonus", hppFile);
 
     replaceValue(tempoBonusMG, "tempoBonusMG", hppFile);
