@@ -20,6 +20,7 @@ matrix:
 
 before_install:
   - eval "${MATRIX_EVAL}"
+  - pip install --user cpp-coveralls
 
 install:
 
@@ -28,5 +29,11 @@ install:
   - g++ -v
 
 script:
+  - make clean
   - make 
+  - make clean
   - make texeltest
+  - ./texeltest
+
+after_success:
+  - coveralls --exclude objdef --exclude objdeftest --exclude test --exclude util --exclude bookgui --gcov-options '\-lp -o objdeftest/'  

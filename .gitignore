@@ -32,5 +32,6 @@
 *.gcov
 
 objdef
+objdeftest
 texel
 texeltest

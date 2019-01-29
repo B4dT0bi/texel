@@ -86,10 +86,10 @@ STRIP_DEF	= strip
 OBJS_COMMON_DEF	= $(patsubst %.cpp,objdef/%.o,$(SRC_COMMON))
 OBJS_UTIL_COMMON_DEF = $(patsubst %.cpp,objdef/%.o,$(SRC_UTIL_COMMON))
 OBJS_DEF	= $(patsubst %.cpp,objdef/%.o,$(SRC))
-OBJS_DEF_TEST	= $(patsubst %.cpp,objdef/%.o,$(SRC_COMMON))
+OBJS_DEF_TEST	= $(patsubst %.cpp,objdeftest/%.o,$(SRC_COMMON))
 OBJS_C_DEF	= $(patsubst %.c,objdef/%.o,$(SRC_GTB))
-OBJS_C_DEF_TEST	= $(patsubst %.c,objdef/%.o,$(SRC_GTB))
-OBJS_TEST_DEF   = $(patsubst %.cpp,objdef/%.o,$(SRC_TEST))
+OBJS_C_DEF_TEST	= $(patsubst %.c,objdeftest/%.o,$(SRC_GTB))
+OBJS_TEST_DEF   = $(patsubst %.cpp,objdeftest/%.o,$(SRC_TEST))
 OBJS_UTIL_DEF   = $(patsubst %.cpp,objdef/%.o,$(SRC_UTIL))
 OBJS_BOOKGUI_DEF = $(patsubst %.cpp,objdef/%.o,$(SRC_BOOKGUI))
 #FLAGS_DEF	+= -DNUMA
@@ -283,15 +283,15 @@ $(OBJS_C_DEF) : objdef/%.o : src/%.c
 	@mkdir -p $$(dirname $@)
 	$(CC_DEF) $(CFLAGS_DEF) -c -o $@ $<
 
-$(OBJS_DEF_TEST) : objdef/%.o : src/%.cpp
+$(OBJS_DEF_TEST) : objdeftest/%.o : src/%.cpp
 	@mkdir -p $$(dirname $@)
 	$(CXX_DEF) $(CXXFLAGS_DEF) $(CXXFLAGS_TEST) -c -o $@ $<
 
-$(OBJS_C_DEF_TEST) : objdef/%.o : src/%.c
+$(OBJS_C_DEF_TEST) : objdeftest/%.o : src/%.c
 	@mkdir -p $$(dirname $@)
 	$(CC_DEF) $(CFLAGS_DEF) $(CXXFLAGS_TEST) -c -o $@ $<
 
-$(OBJS_TEST_DEF) : objdef/%.o : test/src/%.cpp
+$(OBJS_TEST_DEF) : objdeftest/%.o : test/src/%.cpp
 	@mkdir -p $$(dirname $@)
 	$(CXX_DEF) $(CXXFLAGS_DEF) $(INC_TEST) -c -o $@ $<
 
@@ -311,7 +311,7 @@ texel	 : $(OBJS_DEF) $(OBJS_C_DEF) Makefile
 	$(CXX_DEF) $(LDFLAGS_DEF) -o $@ $(OBJS_DEF) $(OBJS_C_DEF)
 
 texeltest : $(OBJS_DEF_TEST) $(OBJS_C_DEF_TEST) $(OBJS_TEST_DEF) Makefile
-	$(CXX_DEF) $(LDFLAGS_DEF_TEST) -o $@ $(OBJS_COMMON_DEF) $(OBJS_C_DEF_TEST) $(OBJS_TEST_DEF)
+	$(CXX_DEF) $(LDFLAGS_DEF_TEST) -o $@ $(OBJS_DEF_TEST) $(OBJS_C_DEF_TEST) $(OBJS_TEST_DEF)
 
 texelutil : $(OBJS_COMMON_DEF) $(OBJS_C_DEF) $(OBJS_UTIL_DEF) Makefile
 	$(CXX_DEF) $(LDFLAGS_DEF) $(LDFLAGS_UTIL_DEF) -o $@ $(OBJS_COMMON_DEF) $(OBJS_C_DEF) $(OBJS_UTIL_DEF)
@@ -451,6 +451,7 @@ clean 	:
 	rm -rf $(OBJS) *~ obj32 obj64 objarm objarm64 objw64bmi objw64 objw64cl objw64amd
 	rm -rf objw64old objw32 objw32old objdef
 	rm -rf bookgui/src/resource.cpp
+	rm -rf objdeftest
 
 .PHONY	: clean dist FORCE
 
