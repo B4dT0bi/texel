@@ -79,19 +79,24 @@ CXXFLAGS_BOOKGUI_DEF = $$(pkg-config gtkmm-3.0 --cflags)
 CC_DEF		= gcc
 CFLAGS_DEF	= $(FLAGS_DEF)
 LDFLAGS_DEF	= -pthread
+LDFLAGS_DEF_TEST= $(LDFLAGS_DEF) -lgcov --coverage
 LDFLAGS_UTIL_DEF = -lrt -larmadillo -lgsl -fopenmp
 LDFLAGS_BOOKGUI_DEF = $$(pkg-config gtkmm-3.0 --libs) -lfreetype
 STRIP_DEF	= strip
 OBJS_COMMON_DEF	= $(patsubst %.cpp,objdef/%.o,$(SRC_COMMON))
 OBJS_UTIL_COMMON_DEF = $(patsubst %.cpp,objdef/%.o,$(SRC_UTIL_COMMON))
 OBJS_DEF	= $(patsubst %.cpp,objdef/%.o,$(SRC))
+OBJS_DEF_TEST	= $(patsubst %.cpp,objdef/%.o,$(SRC_COMMON))
 OBJS_C_DEF	= $(patsubst %.c,objdef/%.o,$(SRC_GTB))
+OBJS_C_DEF_TEST	= $(patsubst %.c,objdef/%.o,$(SRC_GTB))
 OBJS_TEST_DEF   = $(patsubst %.cpp,objdef/%.o,$(SRC_TEST))
 OBJS_UTIL_DEF   = $(patsubst %.cpp,objdef/%.o,$(SRC_UTIL))
 OBJS_BOOKGUI_DEF = $(patsubst %.cpp,objdef/%.o,$(SRC_BOOKGUI))
 #FLAGS_DEF	+= -DNUMA
 #LDFLAGS_DEF	+= -lnuma
 
+# Definitions used by the "texeltest" target
+CXXFLAGS_TEST	= -fprofile-arcs -ftest-coverage
 
 # Definitions used by the "texel32" and "texel64" targets
 #CXX		= mpic++
@@ -278,6 +283,14 @@ $(OBJS_C_DEF) : objdef/%.o : src/%.c
 	@mkdir -p $$(dirname $@)
 	$(CC_DEF) $(CFLAGS_DEF) -c -o $@ $<
 
+$(OBJS_DEF_TEST) : objdef/%.o : src/%.cpp
+	@mkdir -p $$(dirname $@)
+	$(CXX_DEF) $(CXXFLAGS_DEF) $(CXXFLAGS_TEST) -c -o $@ $<
+
+$(OBJS_C_DEF_TEST) : objdef/%.o : src/%.c
+	@mkdir -p $$(dirname $@)
+	$(CC_DEF) $(CFLAGS_DEF) $(CXXFLAGS_TEST) -c -o $@ $<
+
 $(OBJS_TEST_DEF) : objdef/%.o : test/src/%.cpp
 	@mkdir -p $$(dirname $@)
 	$(CXX_DEF) $(CXXFLAGS_DEF) $(INC_TEST) -c -o $@ $<
@@ -297,8 +310,8 @@ bookgui/src/resource.cpp : bookgui/src/gresource.xml bookgui/src/bookgui_glade.x
 texel	 : $(OBJS_DEF) $(OBJS_C_DEF) Makefile
 	$(CXX_DEF) $(LDFLAGS_DEF) -o $@ $(OBJS_DEF) $(OBJS_C_DEF)
 
-texeltest : $(OBJS_COMMON_DEF) $(OBJS_C_DEF) $(OBJS_TEST_DEF) Makefile
-	$(CXX_DEF) $(LDFLAGS_DEF) -o $@ $(OBJS_COMMON_DEF) $(OBJS_C_DEF) $(OBJS_TEST_DEF)
+texeltest : $(OBJS_DEF_TEST) $(OBJS_C_DEF_TEST) $(OBJS_TEST_DEF) Makefile
+	$(CXX_DEF) $(LDFLAGS_DEF_TEST) -o $@ $(OBJS_COMMON_DEF) $(OBJS_C_DEF_TEST) $(OBJS_TEST_DEF)
 
 texelutil : $(OBJS_COMMON_DEF) $(OBJS_C_DEF) $(OBJS_UTIL_DEF) Makefile
 	$(CXX_DEF) $(LDFLAGS_DEF) $(LDFLAGS_UTIL_DEF) -o $@ $(OBJS_COMMON_DEF) $(OBJS_C_DEF) $(OBJS_UTIL_DEF)
