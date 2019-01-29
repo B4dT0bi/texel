@@ -1,3 +1,4 @@
+[![Build Status](https://travis-ci.org/B4dT0bi/texel.svg?branch=master)](https://travis-ci.org/B4dT0bi/texel) [![Coverage Status](https://coveralls.io/repos/github/B4dT0bi/texel/badge.svg?branch=master)](https://coveralls.io/github/B4dT0bi/texel?branch=master)
 # texel
 Texel is a UCI Chess Engine written by Peter Österlund
 
