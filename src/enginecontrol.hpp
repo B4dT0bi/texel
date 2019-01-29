@@ -26,19 +26,23 @@
 #ifndef ENGINECONTROL_HPP_
 #define ENGINECONTROL_HPP_
 
-#include "search.hpp"
 #include "transpositionTable.hpp"
 #include "position.hpp"
 #include "move.hpp"
 #include "parallel.hpp"
+#include "history.hpp"
+#include "killerTable.hpp"
 
 #include <vector>
+#include <map>
 #include <iosfwd>
 #include <thread>
 #include <mutex>
 #include <memory>
 #include <atomic>
 
+class MoveList;
+class Search;
 class SearchParams;
 class SearchListener;
 class EngineControl;
@@ -47,6 +51,7 @@ class EngineControl;
 class EngineMainThread {
 public:
     EngineMainThread();
+    ~EngineMainThread();
     EngineMainThread(const EngineMainThread&) = delete;
     EngineMainThread& operator=(const EngineMainThread&) = delete;
 
@@ -57,10 +62,12 @@ public:
     /** Tells the main loop to terminate. */
     void quit();
 
+    void setupTT();
+    TranspositionTable& getTT();
+
     /** Tell the search thread to start searching. */
     void startSearch(EngineControl* engineControl,
                      std::shared_ptr<Search>& sc, const Position& pos,
-                     TranspositionTable& tt,
                      std::shared_ptr<MoveList>& moves,
                      bool ownBook, bool analyseMode,
                      int maxDepth, int maxNodes,
@@ -86,8 +93,13 @@ private:
     void doSearch();
     void setOptions();
 
+    /** Wait for notifier. If cluster is enabled, only wait a short period of time
+     *  since MPI communication needs polling. */
+    void notifierWait();
+
     Notifier notifier;
-    std::unique_ptr<Communicator> comm;
+    TranspositionTable tt;
+    std::unique_ptr<ThreadCommunicator> comm;
     std::vector<std::shared_ptr<WorkerThread>> children;
 
     std::mutex mutex;
@@ -136,6 +148,9 @@ public:
 
     void setOption(const std::string& optionName, const std::string& optionValue);
 
+    /** If the engine is not searching, wait until all pending options have been processed. */
+    void waitReady();
+
     void finishSearch(Position& pos, const Move& bestMove);
 
 private:
@@ -148,8 +163,6 @@ private:
                      int maxDepth, int maxNodes);
 
     void stopThread();
-
-    void setupTT();
 
     void setupPosition(Position pos, const std::vector<Move>& moves);
 
@@ -167,7 +180,6 @@ private:
     EngineMainThread& engineThread;
     SearchListener& listener;
     std::shared_ptr<Search> sc;
-    TranspositionTable tt;
     KillerTable kt;
     History ht;
     std::unique_ptr<Evaluate::EvalHashTables> et;
@@ -190,6 +202,11 @@ private:
     // Random seed for reduced strength
     U64 randomSeed;
 };
+
+inline TranspositionTable&
+EngineMainThread::getTT() {
+    return tt;
+}
 
 inline Communicator*
 EngineMainThread::getCommunicator() const {

@@ -26,13 +26,14 @@
 #include "bookbuildcontrol.hpp"
 #include "textio.hpp"
 #include "search.hpp"
+#include "clustertt.hpp"
 #include "computerPlayer.hpp"
 #include "gametree.hpp"
 
 
 BookBuildControl::BookBuildControl(ChangeListener& listener)
     : listener(listener), nPendingBookTasks(0), tt(27),
-      comm(nullptr, notifier) {
+      comm(nullptr, tt, notifier, false) {
     ComputerPlayer::initEngine();
     setupTB();
     et = Evaluate::getEvalHashTables();
@@ -296,10 +297,10 @@ BookBuildControl::startAnalysis(const std::vector<Move>& moves) {
         SearchListener(BookBuildControl& bbc0, const Position& pos) : bbc(bbc0), pos0(pos) {}
         void notifyDepth(int depth) override {}
         void notifyCurrMove(const Move& m, int moveNr) override {}
-        void notifyPV(int depth, int score, int time, U64 nodes, int nps,
-                              bool isMate, bool upperBound, bool lowerBound,
-                              const std::vector<Move>& pv, int multiPVIndex,
-                              U64 tbHits) override {
+        void notifyPV(int depth, int score, S64 time, S64 nodes, S64 nps,
+                      bool isMate, bool upperBound, bool lowerBound,
+                      const std::vector<Move>& pv, int multiPVIndex,
+                      S64 tbHits) override {
             Position pos(pos0);
             std::stringstream ss;
             ss << "[" << depth << "] ";
@@ -326,13 +327,13 @@ BookBuildControl::startAnalysis(const std::vector<Move>& moves) {
             }
             bbc.notify(BookBuildControl::Change::PV);
         }
-        void notifyStats(U64 nodes, int nps, int hashFull, U64 tbHits, int time) override {}
+        void notifyStats(S64 nodes, S64 nps, int hashFull, S64 tbHits, S64 time) override {}
     private:
         BookBuildControl& bbc;
         Position pos0;
     };
 
-    Search::SearchTables st(tt, kt, ht, *et);
+    Search::SearchTables st(comm.getCTT(), kt, ht, *et);
     sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, comm, treeLog);
     scListener = make_unique<SearchListener>(*this, pos);
     sc->setListener(*scListener);
@@ -342,7 +343,7 @@ BookBuildControl::startAnalysis(const std::vector<Move>& moves) {
     sc->timeLimit(-1, -1);
     int minProbeDepth = UciParams::minProbeDepth->getIntPar();
     auto f = [this,moveList,minProbeDepth]() {
-        sc->iterativeDeepening(*moveList, -1, -1, false, 1, false, minProbeDepth);
+        sc->iterativeDeepening(*moveList, -1, -1, 1, false, minProbeDepth);
     };
     engineThread = std::make_shared<std::thread>(f);
 }

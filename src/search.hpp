@@ -28,15 +28,12 @@
 
 #include "constants.hpp"
 #include "position.hpp"
-#include "killerTable.hpp"
-#include "history.hpp"
-#include "transpositionTable.hpp"
 #include "evaluate.hpp"
-#include "treeLogger.hpp"
 #include "moveGen.hpp"
 #include "searchUtil.hpp"
 #include "parallel.hpp"
-#include "util/histogram.hpp"
+#include "parameters.hpp"
+#include "util/util.hpp"
 
 #include <limits>
 #include <memory>
@@ -45,6 +42,10 @@
 class SearchTest;
 class ChessTool;
 class PosGenerator;
+class ClusterTT;
+class History;
+class KillerTable;
+
 
 /** Implements the NegaScout search algorithm. */
 class Search {
@@ -54,9 +55,9 @@ class Search {
 public:
     /** Help tables used by the search. */
     struct SearchTables {
-        SearchTables(TranspositionTable& tt0, KillerTable& kt0, History& ht0,
+        SearchTables(ClusterTT& tt0, KillerTable& kt0, History& ht0,
                      Evaluate::EvalHashTables& et0);
-        TranspositionTable& tt;
+        ClusterTT& tt;
         KillerTable& kt;
         History& ht;
         Evaluate::EvalHashTables& et;
@@ -79,11 +80,11 @@ public:
         virtual ~Listener() {}
         virtual void notifyDepth(int depth) = 0;
         virtual void notifyCurrMove(const Move& m, int moveNr) = 0;
-        virtual void notifyPV(int depth, int score, int time, U64 nodes, int nps,
+        virtual void notifyPV(int depth, int score, S64 time, S64 nodes, S64 nps,
                               bool isMate, bool upperBound, bool lowerBound,
                               const std::vector<Move>& pv, int multiPVIndex,
-                              U64 tbHits) = 0;
-        virtual void notifyStats(U64 nodes, int nps, int hashFull, U64 tbHits, int time) = 0;
+                              S64 tbHits) = 0;
+        virtual void notifyStats(S64 nodes, S64 nps, int hashFull, S64 tbHits, S64 time) = 0;
     };
 
     void setListener(Listener& listener);
@@ -111,7 +112,7 @@ public:
     void setMinProbeDepth(int depth);
 
     Move iterativeDeepening(const MoveList& scMovesIn,
-                            int maxDepth, S64 initialMaxNodes, bool verbose,
+                            int maxDepth, S64 initialMaxNodes,
                             int maxPV = 1, bool onlyExact = false,
                             int minProbeDepth = 0, bool clearHistory = false);
 
@@ -154,7 +155,7 @@ public:
      * Static exchange evaluation function.
      * @return SEE score for m. Positive value is good for the side that makes the first move.
      */
-    static int SEE(Position& pos, const Move& m);
+    static int SEE(Position& pos, const Move& m, int alpha, int beta);
 
 private:
     void init(const Position& pos0, const std::vector<U64>& posHashList0,
@@ -215,6 +216,12 @@ private:
 
     static bool passedPawnPush(const Position& pos, const Move& m);
 
+    /** Return true if m moves a piece away from a threat. */
+    static bool defenseMove(const Position& pos, const Move& m);
+
+    /** Return true if the current node at ply is an expected cut node. */
+    bool isExpectedCutNode(int ply) const;
+
     /** Quiescence search. Only non-losing captures are searched. */
     int quiesce(int alpha, int beta, int ply, int depth, const bool inCheck);
 
@@ -222,7 +229,7 @@ private:
      * Static exchange evaluation function.
      * @return SEE score for m. Positive value is good for the side that makes the first move.
      */
-    int SEE(const Move& m);
+    int SEE(const Move& m, int alpha, int beta);
 
     /** Return >0, 0, <0, depending on the sign of SEE(m). */
     int signSEE(const Move& m);
@@ -239,11 +246,9 @@ private:
     /** If hashMove exists in the move list, move the hash move to the front of the list. */
     static bool selectHashMove(MoveList& moves, const Move& hashMove);
 
-    void initNodeStats();
-
     class DefaultStopHandler : public StopHandler {
     public:
-        DefaultStopHandler(Search& sc0) : sc(sc0) { }
+        explicit DefaultStopHandler(Search& sc0) : sc(sc0) { }
         bool shouldStop() override { return sc.shouldStop(); }
     private:
         Search& sc;
@@ -260,11 +265,10 @@ private:
     std::vector<U64> posHashList; // List of hashes for previous positions up to the last "zeroing" move.
     int posHashListSize;          // Number of used entries in posHashList
     int posHashFirstNew;          // First entry in posHashList that has not been played OTB.
-    TranspositionTable& tt;
+    ClusterTT& tt;
     Communicator& comm;
     int jobId = 0;
     int threadNo;
-    bool mainNumaNode; // True if this thread runs on the NUMA node holding the transposition table
     TreeLogger& logFile;
 
     Listener* listener = nullptr;
@@ -290,17 +294,15 @@ private:
     U64 randomSeed;
 
     // Search statistics stuff
-    Histogram<0,20> nodesByPly, nodesByDepth;
     S64 totalNodes;
     S64 tbHits;
     S64 tLastStats;        // Time when notifyStats was last called
-    bool verbose;
 
     int q0Eval; // Static eval score at first level of quiescence search
 };
 
 inline
-Search::SearchTables::SearchTables(TranspositionTable& tt0, KillerTable& kt0, History& ht0,
+Search::SearchTables::SearchTables(ClusterTT& tt0, KillerTable& kt0, History& ht0,
                                    Evaluate::EvalHashTables& et0)
     : tt(tt0), kt(kt0), ht(ht0), et(et0) {
 }
@@ -348,9 +350,41 @@ Search::passedPawnPush(const Position& pos, const Move& m) {
     }
 }
 
+inline bool
+Search::defenseMove(const Position& pos, const Move& m) {
+    int p = pos.getPiece(m.from());
+    if (pos.isWhiteMove()) {
+        if (p == Piece::WPAWN)
+            return false;
+        if ((pos.pieceTypeBB(Piece::BPAWN) & BitBoard::wPawnAttacks[m.from()]) == 0)
+            return false;
+        return (pos.pieceTypeBB(Piece::BPAWN) & BitBoard::wPawnAttacks[m.to()]) == 0;
+    } else {
+        if (p == Piece::BPAWN)
+            return false;
+        if ((pos.pieceTypeBB(Piece::WPAWN) & BitBoard::bPawnAttacks[m.from()]) == 0)
+            return false;
+        return (pos.pieceTypeBB(Piece::WPAWN) & BitBoard::bPawnAttacks[m.to()]) == 0;
+    }
+}
+
+inline bool
+Search::isExpectedCutNode(int ply) const {
+    int nFirst = 0;
+    while (ply > 0) {
+        ply--;
+        int moveNo = searchTreeInfo[ply].currentMoveNo;
+        if (moveNo == 0)
+            nFirst++;
+        else
+            return (nFirst % 2) == 0;
+    }
+    return false;
+}
+
 inline int
-Search::SEE(const Move& m) {
-    return SEE(pos, m);
+Search::SEE(const Move& m, int alpha, int beta) {
+    return SEE(pos, m, alpha, beta);
 }
 
 inline int
@@ -359,7 +393,7 @@ Search::signSEE(const Move& m) {
     int p1 = ::pieceValue[pos.getPiece(m.to())];
     if (p0 < p1)
         return 1;
-    return SEE(m);
+    return SEE(m, -1, 1);
 }
 
 inline bool
@@ -368,7 +402,7 @@ Search::negSEE(const Move& m) {
     int p1 = ::pieceValue[pos.getPiece(m.to())];
     if (p1 >= p0)
         return false;
-    return SEE(m) < 0;
+    return SEE(m, -1, 0) < 0;
 }
 
 inline void

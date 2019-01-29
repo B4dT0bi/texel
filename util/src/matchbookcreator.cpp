@@ -27,8 +27,12 @@
 #include "position.hpp"
 #include "moveGen.hpp"
 #include "search.hpp"
+#include "transpositionTable.hpp"
+#include "history.hpp"
+#include "killerTable.hpp"
 #include "textio.hpp"
 #include "gametree.hpp"
+#include "clustertt.hpp"
 #include <unordered_set>
 #include <random>
 
@@ -94,7 +98,7 @@ MatchBookCreator::evaluateBookLines(std::vector<BookLine>& lines, int searchTime
     const int nLines = lines.size();
     TranspositionTable tt(28);
     Notifier notifier;
-    ThreadCommunicator comm(nullptr, notifier);
+    ThreadCommunicator comm(nullptr, tt, notifier, false);
     std::shared_ptr<Evaluate::EvalHashTables> et;
 
 #pragma omp parallel for schedule(dynamic) default(none) shared(lines,tt,comm,searchTime,os) private(et)
@@ -122,17 +126,16 @@ MatchBookCreator::evaluateBookLines(std::vector<BookLine>& lines, int searchTime
         MoveGen::pseudoLegalMoves(pos, legalMoves);
         MoveGen::removeIllegal(pos, legalMoves);
 
-        Search::SearchTables st(tt, kt, ht, *et);
+        Search::SearchTables st(comm.getCTT(), kt, ht, *et);
         Search sc(pos, posHashList, posHashListSize, st, comm, treeLog);
         sc.timeLimit(searchTime, searchTime);
 
         int maxDepth = -1;
         S64 maxNodes = -1;
-        bool verbose = false;
         int maxPV = 1;
         bool onlyExact = true;
         int minProbeDepth = 1;
-        Move bestMove = sc.iterativeDeepening(legalMoves, maxDepth, maxNodes, verbose, maxPV,
+        Move bestMove = sc.iterativeDeepening(legalMoves, maxDepth, maxNodes, maxPV,
                                               onlyExact, minProbeDepth);
         int score = bestMove.score();
         if (!pos.isWhiteMove())
@@ -328,8 +331,8 @@ MatchBookCreator::pgnStat(const std::string& pgnFile, bool pairMode, std::ostrea
 
         std::stringstream ss;
         ss.precision(1);
-        ss << std::fixed << (nMoves / (double)nGames);
-        os << "nGames: " << nGames << " nMoves: " << nMoves << " plies/game: " << ss.str() << std::endl;
+        ss << std::fixed << (nMoves / (double)nGames / 2);
+        os << "nGames: " << nGames << " moves/game: " << ss.str() << std::endl;
 
         if (pairMode && players.size() != 2) {
             std::cerr << "Pair mode requires two players" << std::endl;
@@ -400,5 +403,7 @@ MatchBookCreator::getCommentDepth(const std::string& comment, int& depth) {
     auto n = comment.find('/');
     if (n == std::string::npos)
         return false;
-    return str2Num(comment.substr(n+1), depth);
+    if (!str2Num(comment.substr(n+1), depth))
+        return false;
+    return depth < 200;
 }

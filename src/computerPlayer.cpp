@@ -25,7 +25,10 @@
 
 #include "computerPlayer.hpp"
 #include "search.hpp"
+#include "history.hpp"
+#include "killerTable.hpp"
 #include "parallel.hpp"
+#include "clustertt.hpp"
 #include "textio.hpp"
 #include "tbprobe.hpp"
 
@@ -38,7 +41,7 @@ static StaticInitializer<ComputerPlayer> cpInit;
 
 void
 ComputerPlayer::staticInitialize() {
-    std::string name = "Texel 1.07a9lazy";
+    std::string name = "Texel 1.07a29";
     if (sizeof(char*) == 4)
         name += " 32-bit";
     engineName = name;
@@ -76,7 +79,6 @@ ComputerPlayer::ComputerPlayer()
     maxTimeMillis = 10000;
     maxDepth = 100;
     maxNodes = -1;
-    verbose = true;
     bookEnabled = true;
     currentSearch = nullptr;
 }
@@ -92,10 +94,10 @@ ComputerPlayer::getCommand(const Position& posIn, bool drawOffer, const std::vec
     Position pos(posIn);
     KillerTable kt;
     History ht;
-    Search::SearchTables st(tt, kt, ht, *et);
     TreeLogger treeLog;
     Notifier notifier;
-    ThreadCommunicator comm(nullptr, notifier);
+    ThreadCommunicator comm(nullptr, tt, notifier, false);
+    Search::SearchTables st(comm.getCTT(), kt, ht, *et);
     Search sc(pos, posHashList, posHashListSize, st, comm, treeLog);
 
     // Determine all legal moves
@@ -127,7 +129,7 @@ ComputerPlayer::getCommand(const Position& posIn, bool drawOffer, const std::vec
         bestM.setScore(0);
     } else {
         sc.timeLimit(minTimeMillis, maxTimeMillis);
-        bestM = sc.iterativeDeepening(moves, maxDepth, maxNodes, verbose, 1, false, 100);
+        bestM = sc.iterativeDeepening(moves, maxDepth, maxNodes, 1, false, 100);
     }
     currentSearch = nullptr;
     //        tt.printStats();
@@ -180,10 +182,10 @@ ComputerPlayer::searchPosition(Position& pos, int maxTimeMillis) {
     tt.nextGeneration();
     KillerTable kt;
     History ht;
-    Search::SearchTables st(tt, kt, ht, *et);
     TreeLogger treeLog;
     Notifier notifier;
-    ThreadCommunicator comm(nullptr, notifier);
+    ThreadCommunicator comm(nullptr, tt, notifier, false);
+    Search::SearchTables st(comm.getCTT(), kt, ht, *et);
     Search sc(pos, posHashList, 0, st, comm, treeLog);
 
     // Determine all legal moves
@@ -194,7 +196,7 @@ ComputerPlayer::searchPosition(Position& pos, int maxTimeMillis) {
 
     // Find best move using iterative deepening
     sc.timeLimit(maxTimeMillis, maxTimeMillis);
-    Move bestM = sc.iterativeDeepening(moves, -1, -1, false);
+    Move bestM = sc.iterativeDeepening(moves, -1, -1);
 
     // Extract PV
     std::string PV = TextIO::moveToString(pos, bestM, false) + " ";

@@ -25,9 +25,14 @@
 
 #include "parallel.hpp"
 #include "numa.hpp"
+#include "cluster.hpp"
+#include "clustertt.hpp"
 #include "search.hpp"
 #include "tbprobe.hpp"
+#include "history.hpp"
+#include "killerTable.hpp"
 #include "textio.hpp"
+#include "treeLogger.hpp"
 #include "util/logger.hpp"
 
 #include <cmath>
@@ -44,17 +49,23 @@ Notifier::notify() {
 }
 
 void
-Notifier::wait() {
+Notifier::wait(int timeOutMs) {
     std::unique_lock<std::mutex> L(mutex);
-    while (!notified)
-        cv.wait(L);
+    if (timeOutMs == -1) {
+        while (!notified)
+            cv.wait(L);
+    } else {
+        if (!notified)
+            cv.wait_for(L, std::chrono::milliseconds(timeOutMs));
+    }
     notified = false;
 }
 
 // ----------------------------------------------------------------------------
 
-Communicator::Communicator(Communicator* parent)
+Communicator::Communicator(Communicator* parent, TranspositionTable& tt)
     : parent(parent) {
+    ctt = make_unique<ClusterTT>(tt);
     if (parent)
         parent->addChild(this);
 }
@@ -62,6 +73,11 @@ Communicator::Communicator(Communicator* parent)
 Communicator::~Communicator() {
     if (parent)
         parent->removeChild(this);
+}
+
+ClusterTT&
+Communicator::getCTT() {
+    return *ctt;
 }
 
 void
@@ -75,6 +91,26 @@ Communicator::removeChild(Communicator* child) {
     std::lock_guard<std::mutex> L(mutex);
     children.erase(std::remove(children.begin(), children.end(), child),
                    children.end());
+}
+
+void
+Communicator::sendAssignThreads(int nThreadsThisNode,
+                                const std::vector<int>& nThreadsChildren) {
+    int threadOffs = Cluster::instance().getGlobalThreadOffset() + nThreadsThisNode;
+    for (auto& c : children) {
+        int childNo = c->clusterChildNo();
+        if (childNo >= 0) {
+            int nt = nThreadsChildren[childNo];
+            c->doSendAssignThreads(nt, threadOffs);
+            threadOffs += nt;
+        }
+    }
+}
+
+void
+Communicator::forwardAssignThreads(int nThreads, int firstThreadNo) {
+    for (auto& c : children)
+        c->doSendAssignThreads(nThreads, firstThreadNo);
 }
 
 void
@@ -103,6 +139,25 @@ Communicator::sendStopSearch() {
         c->doSendStopSearch();
 }
 
+void
+Communicator::sendSetParam(const std::string& name, const std::string& value, bool toAll) {
+    for (auto& c : children)
+        if (toAll || c->clusterChildNo() >= 0)
+            c->doSendSetParam(name, value);
+}
+
+void
+Communicator::sendQuit() {
+    quitAckWaitChildren = children.size();
+    if (quitAckWaitChildren > 0) {
+        for (auto& c : children)
+            c->doSendQuit();
+    } else {
+        quitAckWaitChildren = 1;
+        sendQuitAck();
+    }
+}
+
 
 void
 Communicator::sendReportResult(int jobId, int score) {
@@ -111,8 +166,8 @@ Communicator::sendReportResult(int jobId, int score) {
 }
 
 void
-Communicator::sendReportStats(S64 nodesSearched, S64 tbHits) {
-    if (parent) {
+Communicator::sendReportStats(S64 nodesSearched, S64 tbHits, bool propagate) {
+    if (parent && propagate) {
         retrieveStats(nodesSearched, tbHits);
         parent->doSendReportStats(nodesSearched, tbHits);
     } else {
@@ -134,11 +189,36 @@ Communicator::sendStopAck(bool child) {
 }
 
 void
-Communicator::poll(CommandHandler& handler) {
+Communicator::forwardStopAck() {
     if (parent)
-        parent->doPoll();
-    for (auto& c : children)
-        c->doPoll();
+        parent->doSendStopAck();
+}
+
+void
+Communicator::sendQuitAck() {
+    quitAckWaitChildren--;
+    if (hasQuitAck()) {
+        if (parent)
+            parent->doSendQuitAck();
+        else
+            notifyThread();
+    }
+}
+
+void
+Communicator::forwardQuitAck() {
+    if (parent)
+        parent->doSendQuitAck();
+}
+
+void
+Communicator::poll(CommandHandler& handler) {
+    for (int pass = 0; pass < 2; pass++) {
+        if (parent)
+            parent->doPoll(pass);
+        for (auto& c : children)
+            c->doPoll(pass);
+    }
 
     while (true) {
         std::unique_lock<std::mutex> L(mutex);
@@ -149,6 +229,11 @@ Communicator::poll(CommandHandler& handler) {
         L.unlock();
 
         switch (cmd->type) {
+        case CommandType::ASSIGN_THREADS: {
+            const AssignThreadsCommand* aCmd = static_cast<const AssignThreadsCommand*>(cmd.get());
+            handler.assignThreads(aCmd->nThreads, aCmd->firstThreadNo);
+            break;
+        }
         case CommandType::INIT_SEARCH: {
             const InitSearchCommand* iCmd = static_cast<const InitSearchCommand*>(cmd.get());
             Position pos;
@@ -164,21 +249,214 @@ Communicator::poll(CommandHandler& handler) {
         case CommandType::STOP_SEARCH:
             handler.stopSearch();
             break;
-        case CommandType::REPORT_RESULT: {
+        case CommandType::SET_PARAM: {
+            const SetParamCommand* spCmd = static_cast<const SetParamCommand*>(cmd.get());
+            handler.setParam(spCmd->name, spCmd->value);
+            break;
+        }
+        case CommandType::QUIT:
+            handler.quit();
+            break;
+        case CommandType::REPORT_RESULT:
             handler.reportResult(cmd->jobId, cmd->resultScore);
             break;
         case CommandType::STOP_ACK:
             handler.stopAck();
             break;
-        }
+        case CommandType::QUIT_ACK:
+            handler.quitAck();
+            break;
+        case CommandType::REPORT_STATS:
+            break;
+        case CommandType::TT_DATA:
+        case CommandType::TT_ACK:
+            assert(false);
         }
     }
 }
 
 // ----------------------------------------------------------------------------
 
-ThreadCommunicator::ThreadCommunicator(Communicator* parent, Notifier& notifier)
-    : Communicator(parent), notifier(notifier) {
+using Serializer::putBytes;
+using Serializer::getBytes;
+
+U8*
+Communicator::Command::toByteBuf(U8* buffer) const {
+    return Serializer::serialize<64>(buffer, (int)type, jobId,
+                                     resultScore, clearHistory);
+}
+
+const U8*
+Communicator::Command::fromByteBuf(const U8* buffer) {
+    int tmpType;
+    buffer = Serializer::deSerialize<64>(buffer, tmpType, jobId,
+                                         resultScore, clearHistory);
+    type = (CommandType)tmpType;
+    return buffer;
+}
+
+U8*
+Communicator::AssignThreadsCommand::toByteBuf(U8* buffer) const {
+    buffer = Command::toByteBuf(buffer);
+    return Serializer::serialize<64>(buffer, nThreads, firstThreadNo);
+    return buffer;
+}
+
+const U8*
+Communicator::AssignThreadsCommand::fromByteBuf(const U8* buffer) {
+    buffer = Command::fromByteBuf(buffer);
+    buffer = Serializer::deSerialize<64>(buffer, nThreads, firstThreadNo);
+    return buffer;
+}
+
+U8*
+Communicator::InitSearchCommand::toByteBuf(U8* buffer) const {
+    buffer = Command::toByteBuf(buffer);
+    for (int i = 0; i < (int)COUNT_OF(posData.v); i++)
+        buffer = putBytes(buffer, posData.v[i]);
+    int len = posHashList.size();
+    buffer = putBytes(buffer, len);
+    for (int i = 0; i < len; i++)
+        buffer = putBytes(buffer, posHashList[i]);
+    buffer = putBytes(buffer, posHashListSize);
+    return buffer;
+}
+
+const U8*
+Communicator::InitSearchCommand::fromByteBuf(const U8* buffer) {
+    buffer = Command::fromByteBuf(buffer);
+    for (int i = 0; i < (int)COUNT_OF(posData.v); i++)
+        buffer = getBytes(buffer, posData.v[i]);
+    int len;
+    buffer = getBytes(buffer, len);
+    posHashList.resize(len);
+    for (int i = 0; i < len; i++)
+        buffer = getBytes(buffer, posHashList[i]);
+    buffer = getBytes(buffer, posHashListSize);
+    return buffer;
+}
+
+U8*
+Communicator::StartSearchCommand::toByteBuf(U8* buffer) const {
+    buffer = Command::toByteBuf(buffer);
+    buffer = sti.serialize(buffer);
+    buffer = Serializer::serialize<64>(buffer, alpha, beta, depth);
+    return buffer;
+}
+
+const U8*
+Communicator::StartSearchCommand::fromByteBuf(const U8* buffer) {
+    buffer = Command::fromByteBuf(buffer);
+    buffer = sti.deSerialize(buffer);
+    buffer = Serializer::deSerialize<64>(buffer, alpha, beta, depth);
+    return buffer;
+}
+
+U8*
+Communicator::SetParamCommand::toByteBuf(U8* buffer) const {
+    buffer = Command::toByteBuf(buffer);
+    int len1 = name.length();
+    int len2 = value.length();
+    buffer = Serializer::serialize<64>(buffer, len1, len2);
+    for (int i = 0; i < len1; i++)
+        buffer = putBytes(buffer, name[i]);
+    for (int i = 0; i < len2; i++)
+        buffer = putBytes(buffer, value[i]);
+    return buffer;
+}
+
+const U8*
+Communicator::SetParamCommand::fromByteBuf(const U8* buffer) {
+    buffer = Command::fromByteBuf(buffer);
+    int len1, len2;
+    buffer = Serializer::deSerialize<64>(buffer, len1, len2);
+    name.resize(len1);
+    for (int i = 0; i < len1; i++)
+        buffer = getBytes(buffer, name[i]);
+    value.resize(len2);
+    for (int i = 0; i < len2; i++)
+        buffer = getBytes(buffer, value[i]);
+    return buffer;
+}
+
+U8*
+Communicator::ReportStatsCommand::toByteBuf(U8* buffer) const {
+    buffer = Command::toByteBuf(buffer);
+    buffer = Serializer::serialize<64>(buffer, nodesSearched, tbHits);
+    return buffer;
+}
+
+const U8*
+Communicator::ReportStatsCommand::fromByteBuf(const U8* buffer) {
+    buffer = Command::fromByteBuf(buffer);
+    buffer = Serializer::deSerialize<64>(buffer, nodesSearched, tbHits);
+    return buffer;
+}
+
+std::unique_ptr<Communicator::Command>
+Communicator::Command::createFromByteBuf(const U8* buffer) {
+    std::unique_ptr<Command> cmd;
+    int tmpType;
+    getBytes(buffer, tmpType);
+    CommandType type = (CommandType)tmpType;
+    switch (type) {
+    case ASSIGN_THREADS:
+        cmd = make_unique<AssignThreadsCommand>();
+        break;
+    case INIT_SEARCH:
+        cmd = make_unique<InitSearchCommand>();
+        break;
+    case START_SEARCH:
+        cmd = make_unique<StartSearchCommand>();
+        break;
+    case STOP_SEARCH:
+    case QUIT:
+    case REPORT_RESULT:
+    case STOP_ACK:
+    case QUIT_ACK:
+    case TT_DATA:
+    case TT_ACK:
+        cmd = make_unique<Command>();
+        break;
+    case SET_PARAM:
+        cmd = make_unique<SetParamCommand>();
+        break;
+    case REPORT_STATS:
+        cmd = make_unique<ReportStatsCommand>();
+        break;
+    }
+
+    cmd->fromByteBuf(buffer);
+    return std::move(cmd);
+}
+
+// ----------------------------------------------------------------------------
+
+ThreadCommunicator::ThreadCommunicator(Communicator* parent, TranspositionTable& tt,
+                                       Notifier& notifier, bool createTTReceiver)
+    : Communicator(parent, tt), notifier(&notifier) {
+    if (createTTReceiver)
+        ttReceiver = Cluster::instance().createLocalTTReceiver(tt);
+}
+
+ThreadCommunicator::~ThreadCommunicator() {
+}
+
+TTReceiver*
+ThreadCommunicator::getTTReceiver() {
+    return ttReceiver.get();
+}
+
+void
+ThreadCommunicator::setNotifier(Notifier& notifier) {
+    this->notifier = &notifier;
+}
+
+void
+ThreadCommunicator::doSendAssignThreads(int nThreads, int firstThreadNo) {
+    std::lock_guard<std::mutex> L(mutex);
+    cmdQueue.push_back(std::make_shared<AssignThreadsCommand>(nThreads, firstThreadNo));
+    notifier->notify();
 }
 
 void
@@ -187,7 +465,7 @@ ThreadCommunicator::doSendInitSearch(const Position& pos,
                                      bool clearHistory) {
     std::lock_guard<std::mutex> L(mutex);
     cmdQueue.push_back(std::make_shared<InitSearchCommand>(pos, posHashList, posHashListSize, clearHistory));
-    notifier.notify();
+    notifier->notify();
 }
 
 void
@@ -202,7 +480,7 @@ ThreadCommunicator::doSendStartSearch(int jobId, const SearchTreeInfo& sti,
                                   }),
                    cmdQueue.end());
     cmdQueue.push_back(std::make_shared<StartSearchCommand>(jobId, sti, alpha, beta, depth));
-    notifier.notify();
+    notifier->notify();
 }
 
 void
@@ -216,14 +494,28 @@ ThreadCommunicator::doSendStopSearch() {
                                   }),
                    cmdQueue.end());
     cmdQueue.push_back(std::make_shared<Command>(CommandType::STOP_SEARCH));
-    notifier.notify();
+    notifier->notify();
+}
+
+void
+ThreadCommunicator::doSendSetParam(const std::string& name, const std::string& value) {
+    std::lock_guard<std::mutex> L(mutex);
+    cmdQueue.push_back(std::make_shared<SetParamCommand>(name, value));
+    notifier->notify();
+}
+
+void
+ThreadCommunicator::doSendQuit() {
+    std::lock_guard<std::mutex> L(mutex);
+    cmdQueue.push_back(std::make_shared<Command>(CommandType::QUIT));
+    notifier->notify();
 }
 
 void
 ThreadCommunicator::doSendReportResult(int jobId, int score) {
     std::lock_guard<std::mutex> L(mutex);
     cmdQueue.push_back(std::make_shared<Command>(CommandType::REPORT_RESULT, jobId, score));
-    notifier.notify();
+    notifier->notify();
 }
 
 void
@@ -246,12 +538,19 @@ void
 ThreadCommunicator::doSendStopAck() {
     std::lock_guard<std::mutex> L(mutex);
     cmdQueue.push_back(std::make_shared<Command>(CommandType::STOP_ACK));
-    notifier.notify();
+    notifier->notify();
+}
+
+void
+ThreadCommunicator::doSendQuitAck() {
+    std::lock_guard<std::mutex> L(mutex);
+    cmdQueue.push_back(std::make_shared<Command>(CommandType::QUIT_ACK));
+    notifier->notify();
 }
 
 void
 ThreadCommunicator::notifyThread() {
-    notifier.notify();
+    notifier->notify();
 }
 
 
@@ -260,17 +559,20 @@ ThreadCommunicator::notifyThread() {
 WorkerThread::WorkerThread(int threadNo, Communicator* parentComm,
                            int numWorkers, TranspositionTable& tt)
     : threadNo(threadNo), numWorkers(numWorkers), terminate(false), tt(tt) {
-    auto f = [this,parentComm]() {
-        mainLoop(parentComm);
-    };
-    thread = make_unique<std::thread>(f);
+    if (parentComm) {
+        auto f = [this,parentComm]() {
+            mainLoop(parentComm, false);
+        };
+        thread = make_unique<std::thread>(f);
+    }
 }
 
 WorkerThread::~WorkerThread() {
     children.clear();
     terminate = true;
     threadNotifier.notify();
-    thread->join();
+    if (thread)
+        thread->join();
 }
 
 void
@@ -307,25 +609,47 @@ WorkerThread::waitInitialized() {
 }
 
 void
-WorkerThread::mainLoop(Communicator* parentComm) {
-    Numa::instance().bindThread(threadNo);
+WorkerThread::mainLoopCluster(std::unique_ptr<ThreadCommunicator>&& comm) {
+    this->comm = std::move(comm);
+    mainLoop(nullptr, true);
+}
 
-    comm = make_unique<ThreadCommunicator>(parentComm, threadNotifier);
-    createWorkers(threadNo + 1, comm.get(), numWorkers - 1, tt, children);
+void
+WorkerThread::mainLoop(Communicator* parentComm, bool cluster) {
+    Numa::instance().bindThread(threadNo);
+    if (!cluster) {
+        comm = make_unique<ThreadCommunicator>(parentComm, tt, threadNotifier, threadNo == 0);
+        Cluster::instance().connectClusterReceivers(comm.get());
+        createWorkers(threadNo + 1, comm.get(), numWorkers - 1, tt, children);
+    } else
+        comm->setNotifier(threadNotifier);
 
     initialized.notify();
 
     CommHandler handler(*this);
 
     while (true) {
-        threadNotifier.wait();
+        threadNotifier.wait(Cluster::instance().isEnabled() ? 1 : -1);
         if (terminate)
             break;
         comm->poll(handler);
+        if (comm->hasQuitAck())
+            break;
         if (jobId != -1)
             doSearch(handler);
         comm->sendStopAck(false);
     }
+}
+
+void
+WorkerThread::CommHandler::assignThreads(int nThreads, int firstThreadNo) {
+    Cluster::instance().setGlobalThreadOffset(firstThreadNo);
+    int nThreadsThisNode;
+    std::vector<int> nThreadsChildren;
+    Cluster::instance().assignThreads(nThreads, nThreadsThisNode, nThreadsChildren);
+    wt.comm->sendAssignThreads(nThreadsThisNode, nThreadsChildren);
+    wt.disabled = nThreadsThisNode < 1;
+    WorkerThread::createWorkers(1, wt.comm.get(), nThreadsThisNode - 1, wt.tt, wt.children);
 }
 
 void
@@ -353,6 +677,8 @@ WorkerThread::CommHandler::initSearch(const Position& pos,
 void
 WorkerThread::CommHandler::startSearch(int jobId, const SearchTreeInfo& sti,
                                        int alpha, int beta, int depth) {
+    if (wt.disabled)
+        return;
     wt.comm->sendStartSearch(jobId, sti, alpha, beta, depth);
     wt.sti = sti;
     wt.jobId = jobId;
@@ -369,6 +695,21 @@ WorkerThread::CommHandler::stopSearch() {
 }
 
 void
+WorkerThread::CommHandler::setParam(const std::string& name, const std::string& value) {
+    wt.comm->sendSetParam(name, value);
+    Parameters::instance().set(name, value);
+}
+
+void
+WorkerThread::CommHandler::quit() {
+    if (wt.getThreadNo() == 0)
+        wt.comm->sendQuit();
+    else {
+        wt.comm->forwardQuitAck();
+    }
+}
+
+void
 WorkerThread::CommHandler::reportResult(int jobId, int score) {
     wt.sendReportResult(jobId, score);
 }
@@ -376,6 +717,11 @@ WorkerThread::CommHandler::reportResult(int jobId, int score) {
 void
 WorkerThread::CommHandler::stopAck() {
     wt.comm->sendStopAck(true);
+}
+
+void
+WorkerThread::CommHandler::quitAck() {
+    wt.comm->sendQuitAck();
 }
 
 void
@@ -388,7 +734,7 @@ WorkerThread::sendReportResult(int jobId, int score) {
 
 void
 WorkerThread::sendReportStats(S64 nodesSearched, S64 tbHits) {
-    comm->sendReportStats(nodesSearched, tbHits);
+    comm->sendReportStats(nodesSearched, tbHits, true);
 }
 
 class ThreadStopHandler : public Search::StopHandler {
@@ -396,7 +742,7 @@ public:
     ThreadStopHandler(WorkerThread& wt, int jobId, const Search& sc,
                       Communicator::CommandHandler& commHandler);
 
-    /** Destructor. Report searched nodes to ParallelData object. */
+    /** Destructor. Report searched nodes to parent communicator. */
     ~ThreadStopHandler();
 
     ThreadStopHandler(const ThreadStopHandler&) = delete;
@@ -465,9 +811,9 @@ WorkerThread::doSearch(CommHandler& commHandler) {
         ht = make_unique<History>();
 
     using namespace SearchConst;
-    int initExtraDepth = threadNo & 1;
+    int initExtraDepth = 0;
     for (int extraDepth = initExtraDepth; ; extraDepth++) {
-        Search::SearchTables st(tt, *kt, *ht, *et);
+        Search::SearchTables st(comm->getCTT(), *kt, *ht, *et);
         Position pos(this->pos);
         const U64 rootNodeIdx = logFile->logPosition(pos);
 
@@ -487,10 +833,10 @@ WorkerThread::doSearch(CommHandler& commHandler) {
 
         int ply = 1;
         sc.setSearchTreeInfo(ply-1, sti, rootNodeIdx);
-        int captSquare = -1;
         bool inCheck = MoveGen::inCheck(pos);
         try {
             int searchDepth = std::min(depth + extraDepth, MAX_SEARCH_DEPTH);
+            int captSquare = -1;
             int score = sc.negaScout(true, alpha, beta, ply, searchDepth, captSquare, inCheck);
             sendReportResult(jobId, score);
             if (searchDepth >= MAX_SEARCH_DEPTH) {

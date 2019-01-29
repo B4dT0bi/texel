@@ -34,7 +34,12 @@ namespace UciParams {
     std::shared_ptr<Parameters::CheckParam> analyseMode(std::make_shared<Parameters::CheckParam>("UCI_AnalyseMode", false));
     std::shared_ptr<Parameters::StringParam> opponent(std::make_shared<Parameters::StringParam>("UCI_Opponent", ""));
     std::shared_ptr<Parameters::SpinParam> strength(std::make_shared<Parameters::SpinParam>("Strength", 0, 1000, 1000));
-    std::shared_ptr<Parameters::SpinParam> threads(std::make_shared<Parameters::SpinParam>("Threads", 1, 512, 1));
+#ifdef CLUSTER
+    int maxThreads = 64*1024*1024;
+#else
+    int maxThreads = 512;
+#endif
+    std::shared_ptr<Parameters::SpinParam> threads(std::make_shared<Parameters::SpinParam>("Threads", 1, maxThreads, 1));
     std::shared_ptr<Parameters::SpinParam> multiPV(std::make_shared<Parameters::SpinParam>("MultiPV", 1, 256, 1));
 
     std::shared_ptr<Parameters::CheckParam> useNullMove(std::make_shared<Parameters::CheckParam>("UseNullMove", true));
@@ -79,9 +84,7 @@ DEFINE_PARAM(krpknBonus);
 DEFINE_PARAM(RvsBPBonus);
 
 DEFINE_PARAM(pawnTradePenalty);
-DEFINE_PARAM(pieceTradeBonus);
 DEFINE_PARAM(pawnTradeThreshold);
-DEFINE_PARAM(pieceTradeThreshold);
 
 DEFINE_PARAM(threatBonus1);
 DEFINE_PARAM(threatBonus2);
@@ -659,9 +662,7 @@ Parameters::Parameters() {
     REGISTER_PARAM(RvsBPBonus, "RookVsBishopPawnBonus");
 
     REGISTER_PARAM(pawnTradePenalty, "PawnTradePenalty");
-    REGISTER_PARAM(pieceTradeBonus, "PieceTradeBonus");
     REGISTER_PARAM(pawnTradeThreshold, "PawnTradeThreshold");
-    REGISTER_PARAM(pieceTradeThreshold, "PieceTradeThreshold");
 
     REGISTER_PARAM(threatBonus1, "ThreatBonus1");
     REGISTER_PARAM(threatBonus2, "ThreatBonus2");

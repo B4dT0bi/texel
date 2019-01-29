@@ -29,41 +29,84 @@
 #include "uciprotocol.hpp"
 #include "util/random.hpp"
 #include "searchparams.hpp"
+#include "search.hpp"
 #include "book.hpp"
 #include "textio.hpp"
 #include "parameters.hpp"
 #include "moveGen.hpp"
 #include "util/logger.hpp"
 #include "numa.hpp"
+#include "cluster.hpp"
+#include "clustertt.hpp"
 
 #include <iostream>
 #include <memory>
 #include <chrono>
 
 
-EngineMainThread::EngineMainThread() {
-    comm = make_unique<ThreadCommunicator>(nullptr, notifier);
+EngineMainThread::EngineMainThread()
+    : tt(8) {
+    Communicator* clusterParent = Cluster::instance().createParentCommunicator(tt);
+    comm = make_unique<ThreadCommunicator>(clusterParent, tt, notifier, true);
+    Cluster::instance().createChildCommunicators(comm.get(), tt);
+    Cluster::instance().connectAllReceivers(comm.get());
+}
+
+EngineMainThread::~EngineMainThread() {
 }
 
 void
 EngineMainThread::mainLoop() {
     Numa::instance().bindThread(0);
-
-    while (true) {
-        notifier.wait();
-        if (quitFlag)
-            break;
-        setOptions();
-        if (search) {
-            doSearch();
+    if (!Cluster::instance().isMasterNode()) {
+        UciParams::hash->addListener([this]() {
+            setupTT();
+        });
+        UciParams::clearHash->addListener([this]() {
+            tt.clear();
+        }, false);
+        WorkerThread worker(0, nullptr, 1, tt);
+        worker.mainLoopCluster(std::move(comm));
+    } else {
+        while (true) {
+            notifierWait();
+            if (quitFlag)
+                break;
             setOptions();
-            {
-                std::lock_guard<std::mutex> L(mutex);
-                search = false;
+            if (search) {
+                doSearch();
+                setOptions();
+                {
+                    std::lock_guard<std::mutex> L(mutex);
+                    search = false;
+                }
+                searchStopped.notify_all();
             }
-            searchStopped.notify_all();
+        }
+        comm->sendQuit();
+        class Handler : public Communicator::CommandHandler {
+        public:
+            explicit Handler(Communicator* comm) : comm(comm) {}
+            void quitAck() override { comm->sendQuitAck(); }
+        private:
+            Communicator* comm;
+        };
+        Handler handler(comm.get());
+        while (true) {
+            comm->poll(handler);
+            if (comm->hasQuitAck())
+                break;
+            notifierWait();
         }
     }
+}
+
+void
+EngineMainThread::notifierWait() {
+    if (Cluster::instance().isEnabled())
+        notifier.wait(1);
+    else
+        notifier.wait();
 }
 
 void
@@ -74,17 +117,43 @@ EngineMainThread::quit() {
 }
 
 void
+EngineMainThread::setupTT() {
+    int hashSizeMB = UciParams::hash->getIntPar();
+    U64 nEntries = hashSizeMB > 0 ? ((U64)hashSizeMB) * (1 << 20) / sizeof(TranspositionTable::TTEntry)
+                                  : (U64)1024;
+    int logSize = 0;
+    while (nEntries > 1) {
+        logSize++;
+        nEntries /= 2;
+    }
+    logSize++;
+    while (true) {
+        try {
+            logSize--;
+            if (logSize <= 0)
+                break;
+            tt.reSize(logSize);
+            break;
+        } catch (const std::bad_alloc& ex) {
+        }
+    }
+}
+
+void
 EngineMainThread::startSearch(EngineControl* engineControl,
                               std::shared_ptr<Search>& sc, const Position& pos,
-                              TranspositionTable& tt,
                               std::shared_ptr<MoveList>& moves,
                               bool ownBook, bool analyseMode,
                               int maxDepth, int maxNodes,
                               int maxPV, int minProbeDepth,
                               std::atomic<bool>& ponder, std::atomic<bool>& infinite) {
-    WorkerThread::createWorkers(1, comm.get(),
-                                UciParams::threads->getIntPar() - 1,
-                                tt, children);
+    int nThreads = UciParams::threads->getIntPar();
+    int nThreadsThisNode;
+    std::vector<int> nThreadsChildren;
+    Cluster::instance().assignThreads(nThreads, nThreadsThisNode, nThreadsChildren);
+    comm->sendAssignThreads(nThreadsThisNode, nThreadsChildren);
+    WorkerThread::createWorkers(1, comm.get(), nThreadsThisNode - 1, tt, children);
+
     {
         std::lock_guard<std::mutex> L(mutex);
         this->engineControl = engineControl;
@@ -143,7 +212,7 @@ EngineMainThread::doSearch() {
 
     bool waitForStop = false;
     if (m.isEmpty()) {
-        m = sc->iterativeDeepening(*moves, maxDepth, maxNodes, false, maxPV, false,
+        m = sc->iterativeDeepening(*moves, maxDepth, maxNodes, maxPV, false,
                                    minProbeDepth, clearHistory);
         waitForStop = true;
     }
@@ -160,7 +229,7 @@ EngineMainThread::doSearch() {
         comm->sendStopSearch();
         class Handler : public Communicator::CommandHandler {
         public:
-            Handler(Communicator* comm) : comm(comm) {}
+            explicit Handler(Communicator* comm) : comm(comm) {}
             void stopAck() override { comm->sendStopAck(true); }
         private:
             Communicator* comm;
@@ -171,7 +240,7 @@ EngineMainThread::doSearch() {
             comm->poll(handler);
             if (comm->hasStopAck())
                 break;
-            notifier.wait();
+            notifierWait();
         }
         notifier.notify();
     }
@@ -194,12 +263,12 @@ EngineMainThread::setOptions() {
         Parameters& params = Parameters::instance();
         for (auto& p : options) {
             const std::string& optionName = p.first;
-            const std::string& optionValue = p.second;
+            std::string optionValue = p.second;
             std::shared_ptr<Parameters::ParamBase> par = params.getParam(optionName);
             if (par && par->type == Parameters::STRING && optionValue == "<empty>")
-                params.set(optionName, "");
-            else
-                params.set(optionName, optionValue);
+                optionValue.clear();
+            params.set(optionName, optionValue);
+            comm->sendSetParam(optionName, optionValue);
         }
     }
 }
@@ -208,14 +277,13 @@ EngineMainThread::setOptions() {
 
 EngineControl::EngineControl(std::ostream& o, EngineMainThread& engineThread0,
                              SearchListener& listener)
-    : os(o), engineThread(engineThread0), listener(listener),
-      tt(8), randomSeed(0) {
+    : os(o), engineThread(engineThread0), listener(listener), randomSeed(0) {
     Numa::instance().bindThread(0);
     hashParListenerId = UciParams::hash->addListener([this]() {
-        setupTT();
+        engineThread.setupTT();
     });
     clearHashParListenerId = UciParams::clearHash->addListener([this]() {
-        tt.clear();
+        engineThread.getTT().clear();
         ht.init();
         engineThread.setClearHistory();
     }, false);
@@ -326,8 +394,8 @@ EngineControl::computeTimeLimit(const SearchParams& sPar) {
 void
 EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int earlyStopPercentage,
                            int maxDepth, int maxNodes) {
-    Search::SearchTables st(tt, kt, ht, *et);
     Communicator* comm = engineThread.getCommunicator();
+    Search::SearchTables st(comm->getCTT(), kt, ht, *et);
     sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, *comm, treeLog);
     sc->setListener(listener);
     sc->setStrength(UciParams::strength->getIntPar(), randomSeed);
@@ -354,19 +422,19 @@ EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int earlyStopPerc
     bool analyseMode = UciParams::analyseMode->getBoolPar();
     int maxPV = (infinite || analyseMode) ? UciParams::multiPV->getIntPar() : 1;
     int minProbeDepth = UciParams::minProbeDepth->getIntPar();
-    if (analyseMode) {
+    if (analyseMode || infinite) {
         Evaluate eval(*et);
         int evScore = eval.evalPosPrint(pos) * (pos.isWhiteMove() ? 1 : -1);
         std::stringstream ss;
         ss.precision(2);
         ss << std::fixed << (evScore / 100.0);
-        os << "info string Eval: " << ss.str() << std::endl;
+        os << "info string eval total  :" << ss.str() << std::endl;
         if (UciParams::analysisAgeHash->getBoolPar())
-            tt.nextGeneration();
+            engineThread.getTT().nextGeneration();
     } else {
-        tt.nextGeneration();
+        engineThread.getTT().nextGeneration();
     }
-    engineThread.startSearch(this, sc, pos, tt, moves, ownBook, analyseMode, maxDepth,
+    engineThread.startSearch(this, sc, pos, moves, ownBook, analyseMode, maxDepth,
                              maxNodes, maxPV, minProbeDepth, ponder, infinite);
 }
 
@@ -381,40 +449,23 @@ EngineControl::stopThread() {
 }
 
 void
-EngineControl::setupTT() {
-    int hashSizeMB = UciParams::hash->getIntPar();
-    U64 nEntries = hashSizeMB > 0 ? ((U64)hashSizeMB) * (1 << 20) / sizeof(TranspositionTable::TTEntry)
-	                          : (U64)1024;
-    int logSize = 0;
-    while (nEntries > 1) {
-        logSize++;
-        nEntries /= 2;
-    }
-    logSize++;
-    while (true) {
-        try {
-            logSize--;
-            if (logSize <= 0)
-                break;
-            tt.reSize(logSize);
-            break;
-        } catch (const std::bad_alloc& ex) {
-        }
-    }
-}
-
-void
 EngineControl::setupPosition(Position pos, const std::vector<Move>& moves) {
     UndoInfo ui;
-    posHashList.resize(SearchConst::MAX_SEARCH_DEPTH * 2 + moves.size());
-    posHashListSize = 0;
-    for (size_t i = 0; i < moves.size(); i++) {
-        const Move& m = moves[i];
-        posHashList[posHashListSize++] = pos.zobristHash();
+    posHashList.clear();
+    for (const Move& m : moves) {
+        posHashList.push_back(pos.zobristHash());
         pos.makeMove(m, ui);
         if (pos.getHalfMoveClock() == 0)
-            posHashListSize = 0;
+            posHashList.clear();
     }
+    if (posHashList.size() > 100) {
+        // If more than 100 reversible moves have been played, a draw by the 50 move
+        // rule can be claimed, so posHashList is not needed, since it is only used
+        // to claim three-fold repetition draws.
+        posHashList.clear();
+    }
+    posHashListSize = posHashList.size();
+    posHashList.resize(posHashListSize + SearchConst::MAX_SEARCH_DEPTH * 2);
     this->pos = pos;
 }
 
@@ -430,7 +481,7 @@ EngineControl::getPonderMove(Position pos, const Move& m) {
     pos.makeMove(m, ui);
     TranspositionTable::TTEntry ent;
     ent.clear();
-    tt.probe(pos.historyHash(), ent);
+    engineThread.getTT().probe(pos.historyHash(), ent);
     if (ent.getType() != TType::T_EMPTY) {
         ent.getMove(ret);
         MoveList moves;
@@ -493,6 +544,12 @@ EngineControl::printOptions(std::ostream& os) {
 void
 EngineControl::setOption(const std::string& optionName, const std::string& optionValue) {
     engineThread.setOptionWhenIdle(optionName, optionValue);
+}
+
+void
+EngineControl::waitReady() {
+    if (!sc)
+        engineThread.waitOptionsSet();
 }
 
 void

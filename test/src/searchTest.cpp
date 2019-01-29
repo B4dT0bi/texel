@@ -31,6 +31,9 @@
 #include "position.hpp"
 #include "moveGen.hpp"
 #include "move.hpp"
+#include "history.hpp"
+#include "killerTable.hpp"
+#include "clustertt.hpp"
 #include "textio.hpp"
 
 #include <vector>
@@ -41,11 +44,11 @@
 std::vector<U64> SearchTest::nullHist(SearchConst::MAX_SEARCH_DEPTH * 2);
 TranspositionTable SearchTest::tt(19);
 static Notifier notifier;
-ThreadCommunicator SearchTest::comm(nullptr, notifier);
+ThreadCommunicator SearchTest::comm(nullptr, SearchTest::tt, notifier, false);
 static KillerTable kt;
 static History ht;
 static auto et = Evaluate::getEvalHashTables();
-Search::SearchTables SearchTest::st(tt, kt, ht, *et);
+Search::SearchTables SearchTest::st(SearchTest::comm.getCTT(), kt, ht, *et);
 TreeLogger SearchTest::treeLog;
 
 Move
@@ -55,7 +58,7 @@ SearchTest::idSearch(Search& sc, int maxDepth, int minProbeDepth) {
     MoveGen::removeIllegal(sc.pos, moves);
     sc.scoreMoveList(moves, 0);
     sc.timeLimit(-1, -1);
-    Move bestM = sc.iterativeDeepening(moves, maxDepth, -1, false, 1, false, minProbeDepth);
+    Move bestM = sc.iterativeDeepening(moves, maxDepth, -1, 1, false, minProbeDepth);
     ASSERT_EQUAL(sc.pos.materialId(), PositionTest::computeMaterialId(sc.pos));
     return bestM;
 }
@@ -270,7 +273,7 @@ SearchTest::testCheckEvasion() {
     pos = TextIO::readFEN("r1bq2rk/pp3pbp/2p1p1pQ/7P/3P4/2PB1N2/PP3PPR/2KR4 w - -"); // WAC 004
     sc.init(pos, nullHist, 0);
     sc.setMinProbeDepth(100);
-    bestM = idSearch(sc, 1);
+    bestM = idSearch(sc, 2);
     ASSERT_EQUAL(SearchConst::MATE0 - 4, bestM.score());
     ASSERT_EQUAL(TextIO::stringToMove(pos, "Qxh7+"), bestM);
 }
@@ -296,9 +299,12 @@ SearchTest::testKQKRNullMove() {
 /** Compute SEE(m) and assure that signSEE and negSEE give matching results. */
 int
 SearchTest::getSEE(Search& sc, const Move& m) {
-    int see = sc.SEE(m);
+    const int mate0 = SearchConst::MATE0;
+    int see = sc.SEE(m, -mate0, mate0);
+
     bool neg = sc.negSEE(m);
-    ASSERT_EQUAL(neg, see < 0);
+    ASSERT_EQUAL(see < 0, neg);
+
     int sign = sc.signSEE(m);
     if (sign > 0) {
         ASSERT(see > 0);
@@ -307,6 +313,19 @@ SearchTest::getSEE(Search& sc, const Move& m) {
     } else {
         ASSERT(see < 0);
     }
+
+    int see2 = sc.SEE(m, see, see + 1);
+    ASSERT(see2 <= see);
+    see2 = sc.SEE(m, see - 1, see);
+    ASSERT(see2 >= see);
+    see2 = sc.SEE(m, see - 1, see + 1);
+    ASSERT_EQUAL(see, see2);
+
+    see2 = sc.SEE(m, see - 2, see - 1);
+    ASSERT(see2 >= see - 1);
+    see2 = sc.SEE(m, see + 1, see + 2);
+    ASSERT(see2 <= see + 1);
+
     return see;
 }
 
@@ -419,12 +438,6 @@ SearchTest::testSEE() {
     pos = TextIO::readFEN("8/8/4k3/8/r3P3/8/4K3/8 b - - 0 1");
     sc.init(pos, nullHist, 0);
     ASSERT_EQUAL(pV, getSEE(sc, TextIO::stringToMove(pos, "Rxe4+")));
-
-    pos = TextIO::readFEN("8/3k4/8/8/r1K5/8/8/2R5 w - - 0 1");
-    pos.setWhiteMove(false);
-    sc.init(pos, nullHist, 0);
-    ASSERT_EQUAL(kV, getSEE(sc, Move(TextIO::getSquare("a4"), TextIO::getSquare("c4"), Piece::EMPTY)));
-
 
     // Test blocking pieces
     pos = TextIO::readFEN("r7/p2k4/8/r7/P7/8/4K3/R7 b - - 0 1");
@@ -540,7 +553,7 @@ SearchTest::testTBSearch() {
         MoveGen::removeIllegal(sc.pos, moves);
         sc.scoreMoveList(moves, 0);
         sc.timeLimit(10000, 20000); // Should take less than 2s to generate the TB
-        Move bestM = sc.iterativeDeepening(moves, -1, -1, false, 1, false, -1);
+        Move bestM = sc.iterativeDeepening(moves, -1, -1, 1, false, -1);
         ASSERT_EQUAL(sc.pos.materialId(), PositionTest::computeMaterialId(sc.pos));
         ASSERT_EQUAL(mate0 - 33 * 2, bestM.score());
         TBTest::initTB(gtbDefaultPath, gtbDefaultCacheMB, rtbDefaultPath);

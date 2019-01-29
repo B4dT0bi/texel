@@ -189,6 +189,30 @@ BitBoardTest::testTrailingZeros() {
     ASSERT_EQUAL(64, cnt);
 }
 
+static U64 mirrorXSlow(U64 mask) {
+    U64 ret = 0;
+    while (mask != 0) {
+        int sq = BitBoard::extractSquare(mask);
+        int x = Position::getX(sq);
+        int y = Position::getY(sq);
+        int sq2 = Position::getSquare(7-x, y);
+        ret |= (1ULL << sq2);
+    }
+    return ret;
+}
+
+static U64 mirrorYSlow(U64 mask) {
+    U64 ret = 0;
+    while (mask != 0) {
+        int sq = BitBoard::extractSquare(mask);
+        int x = Position::getX(sq);
+        int y = Position::getY(sq);
+        int sq2 = Position::getSquare(x, 7-y);
+        ret |= (1ULL << sq2);
+    }
+    return ret;
+}
+
 void
 BitBoardTest::testMaskAndMirror() {
     ASSERT_EQUAL(BitBoard::sqMask(A1,H1,A8,H8), BitBoard::maskCorners);
@@ -343,6 +367,22 @@ BitBoardTest::testMaskAndMirror() {
             break;
         }
     }
+
+    for (int sq = 0; sq < 64; sq++) {
+        U64 m = 1ULL << sq;
+        ASSERT_EQUAL(mirrorXSlow(m), BitBoard::mirrorX(m));
+        ASSERT_EQUAL(mirrorYSlow(m), BitBoard::mirrorY(m));
+        m = ~m;
+        ASSERT_EQUAL(mirrorXSlow(m), BitBoard::mirrorX(m));
+        ASSERT_EQUAL(mirrorYSlow(m), BitBoard::mirrorY(m));
+    }
+}
+
+void
+BitBoardTest::testSliders() {
+    Position pos = TextIO::readFEN("4k3/8/8/8/8/8/8/R3K3 w Q - 0 1");
+    ASSERT_EQUAL(BitBoard::sqMask(B1,C1,D1,E1,A2,A3,A4,A5,A6,A7,A8),
+                 BitBoard::rookAttacks(A1, pos.occupiedBB()));
 }
 
 cute::suite
@@ -356,5 +396,6 @@ BitBoardTest::getSuite() const {
     s.push_back(CUTE(testGetDistance));
     s.push_back(CUTE(testTrailingZeros));
     s.push_back(CUTE(testMaskAndMirror));
+    s.push_back(CUTE(testSliders));
     return s;
 }

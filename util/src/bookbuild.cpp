@@ -28,6 +28,7 @@
 #include "gametree.hpp"
 #include "moveGen.hpp"
 #include "search.hpp"
+#include "util/histogram.hpp"
 #include "textio.hpp"
 #include <random>
 
@@ -1371,7 +1372,8 @@ Book::getQueueData(QueueData& queueData) const {
 // ----------------------------------------------------------------------------
 
 SearchRunner::SearchRunner(int instanceNo0, TranspositionTable& tt0)
-    : instanceNo(instanceNo0), tt(tt0), comm(nullptr, notifier), aborted(false) {
+    : instanceNo(instanceNo0), tt(tt0),
+      comm(nullptr, tt, notifier, false), aborted(false) {
 }
 
 Move
@@ -1407,7 +1409,7 @@ SearchRunner::analyze(const std::vector<Move>& gameMoves,
 
     kt.clear();
     ht.init();
-    Search::SearchTables st(tt, kt, ht, et);
+    Search::SearchTables st(comm.getCTT(), kt, ht, et);
     std::shared_ptr<Search> sc;
     {
         std::lock_guard<std::mutex> L(mutex);
@@ -1424,11 +1426,10 @@ SearchRunner::analyze(const std::vector<Move>& gameMoves,
 
     int maxDepth = -1;
     S64 maxNodes = -1;
-    bool verbose = false;
     int maxPV = 1;
     bool onlyExact = true;
     int minProbeDepth = 1;
-    Move bestMove = sc->iterativeDeepening(moveList, maxDepth, maxNodes, verbose, maxPV,
+    Move bestMove = sc->iterativeDeepening(moveList, maxDepth, maxNodes, maxPV,
                                            onlyExact, minProbeDepth);
     return bestMove;
 }
