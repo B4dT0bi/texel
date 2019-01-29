@@ -366,7 +366,7 @@ EngineControl::computeTimeLimit(const SearchParams& sPar) {
 
         if (sPar.moveTime > 0) {
              minTimeLimit = maxTimeLimit = sPar.moveTime;
-             earlyStopPercentage = 100; // Don't stop search early if asked to search a fixed amount of time
+             earlyStopPercentage = 10000; // Don't stop search early if asked to search a fixed amount of time
         } else if (sPar.wTime || sPar.bTime) {
             int moves = sPar.movesToGo;
             if (moves == 0)
@@ -379,10 +379,13 @@ EngineControl::computeTimeLimit(const SearchParams& sPar) {
             int timeLimit = (time + inc * (moves - 1) - margin) / moves;
             minTimeLimit = timeLimit;
             if (UciParams::ponder->getBoolPar()) {
-                const double ponderHitRate = timePonderHitRate * 0.01;
-                minTimeLimit = (int)ceil(minTimeLimit / (1 - ponderHitRate));
+                int oTime = white ? sPar.bTime : sPar.wTime;
+                int oInc  = white ? sPar.bInc : sPar.wInc;
+                double oTimeLimit = (oTime + oInc * (moves - 1) - margin) / moves;
+                double k = timePonderHitRate * 0.01;
+                minTimeLimit += (int)(std::min(oTimeLimit, timeLimit / (1 - k)) * k);
             }
-            maxTimeLimit = (int)(minTimeLimit * clamp(moves * 0.5, 2.0, static_cast<int>(maxTimeUsage) * 0.01));
+            maxTimeLimit = (int)(minTimeLimit * clamp(moves * 0.5, 2.0, maxTimeUsage * 0.01));
 
             // Leave at least 1s on the clock, but can't use negative time
             minTimeLimit = clamp(minTimeLimit, 1, time - margin);

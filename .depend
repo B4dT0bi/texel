@@ -509,9 +509,10 @@ obj64/chesstool.o objarm/chesstool.o objarm64/chesstool.o objdef/chesstool.o obj
  src/parameters.hpp src/clustertt.hpp src/transpositionTable.hpp \
  src/tbgen.hpp src/history.hpp src/killerTable.hpp src/textio.hpp \
  src/chessParseError.hpp util/src/gametree.hpp src/util/util.hpp \
- src/computerPlayer.hpp src/player.hpp src/book.hpp src/util/random.hpp \
- src/syzygy/rtb-probe.hpp src/tbprobe.hpp util/src/stloutput.hpp \
- src/util/timeUtil.hpp
+ util/src/threadpool.hpp src/computerPlayer.hpp src/player.hpp \
+ src/book.hpp src/util/random.hpp src/syzygy/rtb-probe.hpp \
+ src/tbprobe.hpp util/src/stloutput.hpp src/util/timeUtil.hpp \
+ src/util/logger.hpp src/util/timeUtil.hpp
 obj64/gametree.o objarm/gametree.o objarm64/gametree.o objdef/gametree.o objw32/gametree.o objw32old/gametree.o objw64bmi/gametree.o objw64/gametree.o objw64cl/gametree.o objw64amd/gametree.o objw64old/gametree.o: util/src/gametree.cpp util/src/gametree.hpp src/position.hpp \
  src/move.hpp src/util/util.hpp src/undoInfo.hpp src/bitBoard.hpp \
  src/util/alignedAlloc.hpp src/piece.hpp src/material.hpp \
