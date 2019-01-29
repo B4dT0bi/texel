@@ -150,7 +150,7 @@ public:
  * The sample value is equal to the amount of time this object is in scope. */
 class ScopedTimeSample {
 public:
-    explicit ScopedTimeSample(TimeSampleStatistics& tStat);
+    ScopedTimeSample(TimeSampleStatistics& tStat);
     ~ScopedTimeSample();
     ScopedTimeSample(ScopedTimeSample&) = delete;
     ScopedTimeSample& operator=(const ScopedTimeSample&) = delete;

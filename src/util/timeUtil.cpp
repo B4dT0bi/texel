@@ -40,10 +40,13 @@ S64 currentTimeMillis() {
     clock_gettime(c, &sp);
     return (S64)(sp.tv_sec * 1e3 + sp.tv_nsec * 1e-6);
 #else
-    using namespace std::chrono;
-    auto t = high_resolution_clock::now();
+    auto t = std::chrono::high_resolution_clock::now();
     auto t0 = t.time_since_epoch();
-    return duration_cast<milliseconds>(t0).count();
+    auto x = t0.count();
+    using T0Type = decltype(t0);
+    auto n = T0Type::period::num;
+    auto d = T0Type::period::den;
+    return (S64)(x * (1000.0 * n / d));
 #endif
 }
 
@@ -54,10 +57,13 @@ double currentTime() {
     clock_gettime(c, &sp);
     return sp.tv_sec + sp.tv_nsec * 1e-9;
 #else
-    using namespace std::chrono;
-    auto t = high_resolution_clock::now();
+    auto t = std::chrono::high_resolution_clock::now();
     auto t0 = t.time_since_epoch();
-    return duration<double>(t0).count();
+    double x = t0.count();
+    using T0Type = decltype(t0);
+    double n = T0Type::period::num;
+    double d = T0Type::period::den;
+    return x * n / d;
 #endif
 }
 

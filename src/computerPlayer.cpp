@@ -24,11 +24,6 @@
  */
 
 #include "computerPlayer.hpp"
-#include "search.hpp"
-#include "history.hpp"
-#include "killerTable.hpp"
-#include "parallel.hpp"
-#include "clustertt.hpp"
 #include "textio.hpp"
 #include "tbprobe.hpp"
 
@@ -41,7 +36,7 @@ static StaticInitializer<ComputerPlayer> cpInit;
 
 void
 ComputerPlayer::staticInitialize() {
-    std::string name = "Texel 1.07";
+    std::string name = "Texel 1.07a6";
     if (sizeof(char*) == 4)
         name += " 32-bit";
     engineName = name;
@@ -72,13 +67,16 @@ ComputerPlayer::initEngine() {
 }
 
 ComputerPlayer::ComputerPlayer()
-    : tt(15), book(false) {
+    : tt(15), pd(tt),
+      book(false)
+{
     initEngine();
     et = Evaluate::getEvalHashTables();
     minTimeMillis = 10000;
     maxTimeMillis = 10000;
     maxDepth = 100;
     maxNodes = -1;
+    verbose = true;
     bookEnabled = true;
     currentSearch = nullptr;
 }
@@ -86,7 +84,7 @@ ComputerPlayer::ComputerPlayer()
 std::string
 ComputerPlayer::getCommand(const Position& posIn, bool drawOffer, const std::vector<Position>& history) {
     // Create a search object
-    std::vector<U64> posHashList(SearchConst::MAX_SEARCH_DEPTH * 2 + history.size());
+    std::vector<U64> posHashList(200 + history.size());
     int posHashListSize = 0;
     for (size_t i = 0; i < history.size(); i++)
         posHashList[posHashListSize++] = history[i].zobristHash();
@@ -94,11 +92,9 @@ ComputerPlayer::getCommand(const Position& posIn, bool drawOffer, const std::vec
     Position pos(posIn);
     KillerTable kt;
     History ht;
+    Search::SearchTables st(tt, kt, ht, *et);
     TreeLogger treeLog;
-    Notifier notifier;
-    ThreadCommunicator comm(nullptr, tt, notifier, false);
-    Search::SearchTables st(comm.getCTT(), kt, ht, *et);
-    Search sc(pos, posHashList, posHashListSize, st, comm, treeLog);
+    Search sc(pos, posHashList, posHashListSize, st, pd, nullptr, treeLog);
 
     // Determine all legal moves
     MoveList moves;
@@ -129,7 +125,7 @@ ComputerPlayer::getCommand(const Position& posIn, bool drawOffer, const std::vec
         bestM.setScore(0);
     } else {
         sc.timeLimit(minTimeMillis, maxTimeMillis);
-        bestM = sc.iterativeDeepening(moves, maxDepth, maxNodes, 1, false, 100);
+        bestM = sc.iterativeDeepening(moves, maxDepth, maxNodes, verbose, 1, false, 100);
     }
     currentSearch = nullptr;
     //        tt.printStats();
@@ -178,15 +174,13 @@ ComputerPlayer::timeLimit(int minTimeLimit, int maxTimeLimit) {
 std::pair<Move, std::string>
 ComputerPlayer::searchPosition(Position& pos, int maxTimeMillis) {
     // Create a search object
-    std::vector<U64> posHashList(SearchConst::MAX_SEARCH_DEPTH * 2);
+    std::vector<U64> posHashList(200);
     tt.nextGeneration();
     KillerTable kt;
     History ht;
+    Search::SearchTables st(tt, kt, ht, *et);
     TreeLogger treeLog;
-    Notifier notifier;
-    ThreadCommunicator comm(nullptr, tt, notifier, false);
-    Search::SearchTables st(comm.getCTT(), kt, ht, *et);
-    Search sc(pos, posHashList, 0, st, comm, treeLog);
+    Search sc(pos, posHashList, 0, st, pd, nullptr, treeLog);
 
     // Determine all legal moves
     MoveList moves;
@@ -196,7 +190,7 @@ ComputerPlayer::searchPosition(Position& pos, int maxTimeMillis) {
 
     // Find best move using iterative deepening
     sc.timeLimit(maxTimeMillis, maxTimeMillis);
-    Move bestM = sc.iterativeDeepening(moves, -1, -1);
+    Move bestM = sc.iterativeDeepening(moves, -1, -1, false);
 
     // Extract PV
     std::string PV = TextIO::moveToString(pos, bestM, false) + " ";

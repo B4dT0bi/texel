@@ -38,6 +38,8 @@ private:
     static void testUtil();
     static void testSampleStat();
     static void testTime();
+    static void testRangeSumArray();
+    static void testHeap();
     static void testHistogram();
     static void testFloorLog2();
 };

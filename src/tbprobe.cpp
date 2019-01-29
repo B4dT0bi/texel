@@ -113,7 +113,7 @@ static inline int rule50Margin(int dtmScore, int ply, int hmc,
 
 bool
 TBProbe::tbProbe(Position& pos, int ply, int alpha, int beta,
-                 const TranspositionTable& tt, TranspositionTable::TTEntry& ent,
+                 TranspositionTable& tt, TranspositionTable::TTEntry& ent,
                  const int nPieces) {
     // Probe on-demand TB
     const int hmc = pos.getHalfMoveClock();
@@ -241,11 +241,10 @@ TBProbe::tbProbe(Position& pos, int ply, int alpha, int beta,
 bool
 TBProbe::getSearchMoves(Position& pos, const MoveList& legalMoves,
                         std::vector<Move>& movesToSearch,
-                        const TranspositionTable& tt) {
+                        TranspositionTable& tt) {
     const int mate0 = SearchConst::MATE0;
     const int ply = 0;
     TranspositionTable::TTEntry rootEnt;
-    rootEnt.clear();
     if (!tbProbe(pos, ply, -mate0, mate0, tt, rootEnt) || rootEnt.getType() == TType::T_LE)
         return false;
     const int rootScore = rootEnt.getScore(ply);
@@ -281,7 +280,7 @@ TBProbe::getSearchMoves(Position& pos, const MoveList& legalMoves,
 }
 
 bool
-TBProbe::dtmProbe(Position& pos, int ply, const TranspositionTable& tt, int& score) {
+TBProbe::dtmProbe(Position& pos, int ply, TranspositionTable& tt, int& score) {
     const int nPieces = BitBoard::bitCount(pos.occupiedBB());
     if (nPieces <= 4 && tt.probeDTM(pos, ply, score))
         return true;
@@ -291,7 +290,7 @@ TBProbe::dtmProbe(Position& pos, int ply, const TranspositionTable& tt, int& sco
 }
 
 void
-TBProbe::extendPV(const Position& rootPos, std::vector<Move>& pv, const TranspositionTable& tt) {
+TBProbe::extendPV(const Position& rootPos, std::vector<Move>& pv, TranspositionTable& tt) {
     Position pos(rootPos);
     UndoInfo ui;
     int ply = 0;

@@ -43,7 +43,6 @@ private:
     static void testGetDistance();
     static void testTrailingZeros();
     static void testMaskAndMirror();
-    static void testSliders();
 };
 
 #endif /* BITBOARDTEST_HPP_ */

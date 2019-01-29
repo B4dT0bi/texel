@@ -58,7 +58,7 @@ template <typename Histogram>
 class HistogramAdder {
 public:
     /** Constructor. */
-    explicit HistogramAdder(Histogram& h);
+    HistogramAdder(Histogram& h);
 
     /** Destructor. Adds current value to histogram. */
     ~HistogramAdder();

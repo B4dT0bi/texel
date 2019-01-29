@@ -37,7 +37,7 @@ class Random {
 public:
     Random();
 
-    explicit Random(U64 seed);
+    Random(U64 seed);
 
     void setSeed(U64 seed);
 

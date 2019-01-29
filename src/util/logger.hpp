@@ -31,7 +31,6 @@
 
 #include <sstream>
 #include <iostream>
-#include <fstream>
 #include <iomanip>
 #include <mutex>
 
@@ -40,8 +39,6 @@ namespace Logger {
     /** Get mutex for log synchronization. */
     std::mutex& getLogMutex();
 
-    /** Get stream to log to. */
-    std::ostream& getOutStream();
 
     /** Thread-safe logging to cout. */
     template <typename Func> void log(Func func) {
@@ -54,10 +51,8 @@ namespace Logger {
         }
         func(ss);
         std::lock_guard<std::mutex> L(getLogMutex());
-        getOutStream() << ss.str() << std::endl;
+        std::cout << ss.str() << std::endl;
     }
 };
-
-#define LOG(x) Logger::log([&](std::ostream& os) { os << x; })
 
 #endif /* LOGGER_HPP_ */

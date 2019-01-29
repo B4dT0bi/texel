@@ -24,7 +24,6 @@
  */
 
 #include "gametree.hpp"
-#include "textio.hpp"
 #include <stdexcept>
 #include <cassert>
 #include <unordered_map>

@@ -28,12 +28,15 @@
 
 #include "constants.hpp"
 #include "position.hpp"
+#include "killerTable.hpp"
+#include "history.hpp"
+#include "transpositionTable.hpp"
 #include "evaluate.hpp"
+#include "treeLogger.hpp"
 #include "moveGen.hpp"
 #include "searchUtil.hpp"
 #include "parallel.hpp"
-#include "parameters.hpp"
-#include "util/util.hpp"
+#include "util/histogram.hpp"
 
 #include <limits>
 #include <memory>
@@ -42,12 +45,8 @@
 class SearchTest;
 class ChessTool;
 class PosGenerator;
-class ClusterTT;
-class History;
-class KillerTable;
 
-
-/** Implements the NegaScout search algorithm. */
+/** Implements the nega-scout search algorithm. */
 class Search {
     friend class SearchTest;
     friend class ChessTool;
@@ -55,9 +54,9 @@ class Search {
 public:
     /** Help tables used by the search. */
     struct SearchTables {
-        SearchTables(ClusterTT& tt0, KillerTable& kt0, History& ht0,
+        SearchTables(TranspositionTable& tt0, KillerTable& kt0, History& ht0,
                      Evaluate::EvalHashTables& et0);
-        ClusterTT& tt;
+        TranspositionTable& tt;
         KillerTable& kt;
         History& ht;
         Evaluate::EvalHashTables& et;
@@ -65,14 +64,12 @@ public:
 
     /** Constructor. */
     Search(const Position& pos, const std::vector<U64>& posHashList,
-           int posHashListSize, SearchTables& st, Communicator& comm,
+           int posHashListSize, SearchTables& st,
+           ParallelData& pd, const std::shared_ptr<SplitPoint>& rootSp,
            TreeLogger& logFile);
 
     Search(const Search& other) = delete;
     Search& operator=(const Search& other) = delete;
-
-    /** Initializes the searchTreeInfo array. */
-    void initSearchTreeInfo();
 
     /** Interface for reporting search information during search. */
     class Listener {
@@ -80,14 +77,14 @@ public:
         virtual ~Listener() {}
         virtual void notifyDepth(int depth) = 0;
         virtual void notifyCurrMove(const Move& m, int moveNr) = 0;
-        virtual void notifyPV(int depth, int score, S64 time, S64 nodes, S64 nps,
+        virtual void notifyPV(int depth, int score, int time, U64 nodes, int nps,
                               bool isMate, bool upperBound, bool lowerBound,
                               const std::vector<Move>& pv, int multiPVIndex,
-                              S64 tbHits) = 0;
-        virtual void notifyStats(S64 nodes, S64 nps, int hashFull, S64 tbHits, S64 time) = 0;
+                              U64 tbHits) = 0;
+        virtual void notifyStats(U64 nodes, int nps, int hashFull, U64 tbHits, int time) = 0;
     };
 
-    void setListener(Listener& listener);
+    void setListener(std::unique_ptr<Listener> listener);
 
     /** Exception thrown to stop the search. */
     class StopSearch : public std::exception {
@@ -112,19 +109,21 @@ public:
     void setMinProbeDepth(int depth);
 
     Move iterativeDeepening(const MoveList& scMovesIn,
-                            int maxDepth, S64 initialMaxNodes,
+                            int maxDepth, S64 initialMaxNodes, bool verbose,
                             int maxPV = 1, bool onlyExact = false,
-                            int minProbeDepth = 0, bool clearHistory = false);
+                            int minProbeDepth = 0);
 
     /**
      * Main recursive search algorithm.
      * @return Score for the side to make a move, in position given by "pos".
      */
-    template <bool tb>
+    template <bool smp, bool tb>
     int negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
                   const bool inCheck);
-    int negaScout(bool tb,
+    int negaScout(bool smp, bool tb,
                   int alpha, int beta, int ply, int depth, int recaptureSquare,
+                  const bool inCheck);
+    int negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
                   const bool inCheck);
 
     /** Compute extension depth for a move. */
@@ -142,7 +141,9 @@ public:
     void scoreMoveList(MoveList& moves, int ply, int startIdx = 0);
 
     /** Set search tree information for a given ply. */
-    void setSearchTreeInfo(int ply, const SearchTreeInfo& sti, U64 rootNodeIdx);
+    void setSearchTreeInfo(int ply, const SearchTreeInfo& sti,
+                           const Move& currMove, int currMoveNo, int lmr,
+                           U64 rootNodeIdx);
 
     /** Get total number of nodes searched by this thread. */
     S64 getTotalNodesThisThread() const;
@@ -154,14 +155,11 @@ public:
      * Static exchange evaluation function.
      * @return SEE score for m. Positive value is good for the side that makes the first move.
      */
-    static int SEE(Position& pos, const Move& m, int alpha, int beta);
+    static int SEE(Position& pos, const Move& m);
 
 private:
     void init(const Position& pos0, const std::vector<U64>& posHashList0,
               int posHashListSize0);
-
-    int negaScoutRoot(bool tb, int alpha, int beta, int ply, int depth,
-                      const bool inCheck);
 
     /** Information used for move ordering at root and for PV reporting. */
     struct MoveInfo {
@@ -215,12 +213,6 @@ private:
 
     static bool passedPawnPush(const Position& pos, const Move& m);
 
-    /** Return true if m moves a piece away from a threat. */
-    static bool defenseMove(const Position& pos, const Move& m);
-
-    /** Return true if the current node at ply is an expected cut node. */
-    bool isExpectedCutNode(int ply) const;
-
     /** Quiescence search. Only non-losing captures are searched. */
     int quiesce(int alpha, int beta, int ply, int depth, const bool inCheck);
 
@@ -228,7 +220,7 @@ private:
      * Static exchange evaluation function.
      * @return SEE score for m. Positive value is good for the side that makes the first move.
      */
-    int SEE(const Move& m, int alpha, int beta);
+    int SEE(const Move& m);
 
     /** Return >0, 0, <0, depending on the sign of SEE(m). */
     int signSEE(const Move& m);
@@ -245,9 +237,11 @@ private:
     /** If hashMove exists in the move list, move the hash move to the front of the list. */
     static bool selectHashMove(MoveList& moves, const Move& hashMove);
 
+    void initNodeStats();
+
     class DefaultStopHandler : public StopHandler {
     public:
-        explicit DefaultStopHandler(Search& sc0) : sc(sc0) { }
+        DefaultStopHandler(Search& sc0) : sc(sc0) { }
         bool shouldStop() override { return sc.shouldStop(); }
     private:
         Search& sc;
@@ -255,6 +249,9 @@ private:
 
     /** Return true if the search should be stopped immediately. */
     bool shouldStop();
+
+    /** Throw a FailHighException if a helper thread has failed high. */
+    void checkHelperFailHigh() const;
 
 
     Position pos;
@@ -264,17 +261,20 @@ private:
     std::vector<U64> posHashList; // List of hashes for previous positions up to the last "zeroing" move.
     int posHashListSize;          // Number of used entries in posHashList
     int posHashFirstNew;          // First entry in posHashList that has not been played OTB.
-    ClusterTT& tt;
-    Communicator& comm;
-    int jobId = 0;
+    TranspositionTable& tt;
+    ParallelData& pd;
+    std::vector<std::shared_ptr<SplitPoint>> spVec;
+    std::vector<std::shared_ptr<SplitPoint>> pending;
     int threadNo;
+    bool mainNumaNode; // True if this thread runs on the NUMA node holding the transposition table
     TreeLogger& logFile;
 
-    Listener* listener = nullptr;
+    std::unique_ptr<Listener> listener;
     std::unique_ptr<StopHandler> stopHandler;
     Move emptyMove;
 
-    SearchTreeInfo searchTreeInfo[SearchConst::MAX_SEARCH_DEPTH * 2];
+    static const int MAX_SEARCH_DEPTH = 100;
+    SearchTreeInfo searchTreeInfo[MAX_SEARCH_DEPTH * 2];
 
     // Time management
     S64 tStart;                // Time when search started
@@ -285,7 +285,7 @@ private:
     S64 maxNodes;              // Maximum number of nodes to search (approximately)
     int minProbeDepth;         // Minimum depth to probe endgame tablebases.
     int nodesToGo;             // Number of nodes until next time check
-    int nodesBetweenTimeCheck; // How often to check remaining time
+    RelaxedShared<int> nodesBetweenTimeCheck; // How often to check remaining time
 
     // Reduced strength variables
     int strength;              // Strength (0-1000)
@@ -293,22 +293,24 @@ private:
     U64 randomSeed;
 
     // Search statistics stuff
+    Histogram<0,20> nodesByPly, nodesByDepth;
     S64 totalNodes;
     S64 tbHits;
     S64 tLastStats;        // Time when notifyStats was last called
+    bool verbose;
 
     int q0Eval; // Static eval score at first level of quiescence search
 };
 
 inline
-Search::SearchTables::SearchTables(ClusterTT& tt0, KillerTable& kt0, History& ht0,
+Search::SearchTables::SearchTables(TranspositionTable& tt0, KillerTable& kt0, History& ht0,
                                    Evaluate::EvalHashTables& et0)
     : tt(tt0), kt(kt0), ht(ht0), et(et0) {
 }
 
 inline void
-Search::setListener(Listener& listener) {
-    this->listener = &listener;
+Search::setListener(std::unique_ptr<Listener> listener) {
+    this->listener = std::move(listener);
 }
 
 inline void
@@ -349,41 +351,9 @@ Search::passedPawnPush(const Position& pos, const Move& m) {
     }
 }
 
-inline bool
-Search::defenseMove(const Position& pos, const Move& m) {
-    int p = pos.getPiece(m.from());
-    if (pos.isWhiteMove()) {
-        if (p == Piece::WPAWN)
-            return false;
-        if ((pos.pieceTypeBB(Piece::BPAWN) & BitBoard::wPawnAttacks[m.from()]) == 0)
-            return false;
-        return (pos.pieceTypeBB(Piece::BPAWN) & BitBoard::wPawnAttacks[m.to()]) == 0;
-    } else {
-        if (p == Piece::BPAWN)
-            return false;
-        if ((pos.pieceTypeBB(Piece::WPAWN) & BitBoard::bPawnAttacks[m.from()]) == 0)
-            return false;
-        return (pos.pieceTypeBB(Piece::WPAWN) & BitBoard::bPawnAttacks[m.to()]) == 0;
-    }
-}
-
-inline bool
-Search::isExpectedCutNode(int ply) const {
-    int nFirst = 0;
-    while (ply > 0) {
-        ply--;
-        int moveNo = searchTreeInfo[ply].currentMoveNo;
-        if (moveNo == 0)
-            nFirst++;
-        else
-            return (nFirst % 2) == 0;
-    }
-    return false;
-}
-
 inline int
-Search::SEE(const Move& m, int alpha, int beta) {
-    return SEE(pos, m, alpha, beta);
+Search::SEE(const Move& m) {
+    return SEE(pos, m);
 }
 
 inline int
@@ -392,7 +362,7 @@ Search::signSEE(const Move& m) {
     int p1 = ::pieceValue[pos.getPiece(m.to())];
     if (p0 < p1)
         return 1;
-    return SEE(m, -1, 1);
+    return SEE(m);
 }
 
 inline bool
@@ -401,7 +371,7 @@ Search::negSEE(const Move& m) {
     int p1 = ::pieceValue[pos.getPiece(m.to())];
     if (p1 >= p0)
         return false;
-    return SEE(m, -1, 0) < 0;
+    return SEE(m) < 0;
 }
 
 inline void
@@ -429,21 +399,43 @@ Search::selectBest(MoveList& moves, int startIdx) {
 }
 
 inline void
-Search::setSearchTreeInfo(int ply, const SearchTreeInfo& sti,
-                          U64 rootNodeIdx) {
+Search::setSearchTreeInfo(int ply, const SearchTreeInfo& sti, const Move& currMove,
+                          int currMoveNo, int lmr, U64 rootNodeIdx) {
     searchTreeInfo[ply] = sti;
+    searchTreeInfo[ply].currentMove = currMove;
+    searchTreeInfo[ply].currentMoveNo = currMoveNo;
+    searchTreeInfo[ply].lmr = lmr;
     searchTreeInfo[ply].nodeIdx = rootNodeIdx;
 }
 
 inline int
-Search::negaScout(bool tb,
+Search::negaScout(bool smp, bool tb,
                   int alpha, int beta, int ply, int depth, int recaptureSquare,
                   const bool inCheck) {
-    bool tb2 = tb && depth >= minProbeDepth;
-    if (tb2)
-        return negaScout<true>(alpha, beta, ply, depth, recaptureSquare, inCheck);
-    else
-        return negaScout<false>(alpha, beta, ply, depth, recaptureSquare, inCheck);
+    using namespace SearchConst;
+    int minDepth = pd.wq.getMinSplitDepth();
+    if (threadNo == 0)
+        minDepth = (minDepth + MIN_SMP_DEPTH) / 2;
+    if (smp && (depth >= minDepth) &&
+               ((int)spVec.size() < MAX_SP_PER_THREAD)) {
+        bool tb2 = tb && depth >= minProbeDepth;
+        if (tb2)
+            return negaScout<true,true>(alpha, beta, ply, depth, recaptureSquare, inCheck);
+        else
+            return negaScout<true,false>(alpha, beta, ply, depth, recaptureSquare, inCheck);
+    } else {
+        bool tb2 = tb && depth >= minProbeDepth;
+        if (tb2)
+            return negaScout<false,true>(alpha, beta, ply, depth, recaptureSquare, inCheck);
+        else
+            return negaScout<false,false>(alpha, beta, ply, depth, recaptureSquare, inCheck);
+    }
+}
+
+inline int
+Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
+                  const bool inCheck) {
+    return negaScout<false,false>(alpha, beta, ply, depth, recaptureSquare, inCheck);
 }
 
 inline bool
@@ -453,7 +445,7 @@ Search::canClaimDraw50(const Position& pos) {
 
 inline S64
 Search::getTotalNodes() const {
-    return totalNodes + comm.getNumSearchedNodes();
+    return totalNodes + pd.getNumSearchedNodes();
 }
 
 inline S64
@@ -463,7 +455,7 @@ Search::getTotalNodesThisThread() const {
 
 inline S64
 Search::getTbHits() const {
-    return tbHits + comm.getTbHits();
+    return tbHits + pd.getTbHits();
 }
 
 inline S64

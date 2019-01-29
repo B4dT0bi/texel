@@ -42,7 +42,7 @@ class TranspositionTable;
 /** TB storage type that uses part of a transposition table. */
 class TTStorage {
 public:
-    explicit TTStorage(TranspositionTable& tt);
+    TTStorage(TranspositionTable& tt);
 
     void resize(U32 size);
 
@@ -59,7 +59,7 @@ private:
  * Implements the main transposition table using Cuckoo hashing.
  */
 class TranspositionTable {
-private:
+public:
     /** In-memory representation of TT entry. Uses std::atomic for thread safety,
      * but accessed using memory_order_relaxed for maximum performance. */
     struct TTEntryStorage {
@@ -70,13 +70,9 @@ private:
     };
     static_assert(sizeof(TTEntryStorage) == 16, "TTEntryStorage size wrong");
 
-public:
     /** A local copy of a transposition table entry. */
     class TTEntry {
     public:
-        TTEntry() {}
-        TTEntry(U64 key, U64 data) : key(key), data(data) {}
-
         /** Set type to T_EMPTY. */
         void clear();
 
@@ -91,8 +87,6 @@ public:
 
         U64 getKey() const;
         void setKey(U64 k);
-
-        U64 getData() const;
 
         void getMove(Move& m) const;
 
@@ -109,8 +103,6 @@ public:
 
         int getDepth() const;
         void setDepth(int d);
-        bool getBusy() const;
-        void setBusy(bool b);
         int getGeneration() const;
         void setGeneration(int g);
         int getType() const;
@@ -122,8 +114,7 @@ public:
         U64 key;        //  0 64 key         Zobrist hash key
         U64 data;       //  0 16 move        from + (to<<6) + (promote<<12)
                         // 16 16 score       Score from search
-                        // 32  9 depth       Search depth
-                        // 41  1 busy        True if some thread is searching in this position
+                        // 32 10 depth       Search depth
                         // 42  4 generation  Increase when OTB position changes
                         // 46  2 type        exact score, lower bound, upper bound
                         // 48 16 evalScore   Score from static evaluation
@@ -133,18 +124,14 @@ public:
     };
 
     /** Constructor. Creates an empty transposition table with numEntries slots. */
-    explicit TranspositionTable(int log2Size);
+    TranspositionTable(int log2Size);
     TranspositionTable(const TranspositionTable& other) = delete;
     TranspositionTable operator=(const TranspositionTable& other) = delete;
 
     void reSize(int log2Size);
 
     /** Insert an entry in the hash table. */
-    void insert(U64 key, const Move& sm, int type, int ply, int depth, int evalScore,
-                bool busy = false);
-
-    /** Set the busy flag for an entry. Used by "approximate ABDADA" algorithm. */
-    void setBusy(const TTEntry& ent, int ply);
+    void insert(U64 key, const Move& sm, int type, int ply, int depth, int evalScore);
 
     /** Retrieve an entry from the hash table corresponding to position with zobrist key "key". */
     void probe(U64 key, TTEntry& result);
@@ -190,7 +177,7 @@ public:
      * @param score The tablebase score. Only modified for tablebase hits.
      * @return True if pos was found in the tablebase, false otherwise.
      */
-    bool probeDTM(const Position& pos, int ply, int& score) const;
+    bool probeDTM(const Position& pos, int ply, int& score);
 
     /** Low-level methods to read/write a single byte in the table. Used by TB generator code. */
     U8 getByte(U64 idx);
@@ -208,11 +195,7 @@ private:
     static U64 getStoredKey(U64 key);
 
 
-    TTEntryStorage* table; // Points to either tableV or tableLP
-    size_t tableSize;      // Number of entries
-    vector_aligned<TTEntryStorage> tableV;
-    std::shared_ptr<TTEntryStorage> tableLP; // Large page allocation if used
-
+    vector_aligned<TTEntryStorage> table;
     U64 hashMask; // Mask to convert zobrist key to table index
     U8 generation;
 
@@ -282,13 +265,11 @@ inline bool
 TranspositionTable::TTEntry::betterThan(const TTEntry& other, int currGen) const {
     if ((getGeneration() == currGen) != (other.getGeneration() == currGen))
         return getGeneration() == currGen;   // Old entries are less valuable
-    int e1 = (getType() == TType::T_EXACT) ? 3 : 0;
-    int e2 = (other.getType() == TType::T_EXACT) ? 3 : 0;
-    int d1 = getDepth() + e1;
-    int d2 = other.getDepth() + e2;
-    if (d1 != d2)
-        return d1 > d2; // Larger depth is more valuable
-    return false;       // Otherwise, pretty much equally valuable
+    if ((getType() == TType::T_EXACT) != (other.getType() == TType::T_EXACT))
+        return getType() == TType::T_EXACT;         // Exact score more valuable than lower/upper bound
+    if (getDepth() != other.getDepth())
+        return getDepth() > other.getDepth();     // Larger depth is more valuable
+    return false;   // Otherwise, pretty much equally valuable
 }
 
 inline U64
@@ -299,11 +280,6 @@ TranspositionTable::TTEntry::getKey() const {
 inline void
 TranspositionTable::TTEntry::setKey(U64 k) {
     key = k;
-}
-
-inline U64
-TranspositionTable::TTEntry::getData() const {
-    return data;
 }
 
 inline void
@@ -361,22 +337,12 @@ TranspositionTable::TTEntry::isCutOff(int alpha, int beta, int ply, int depth) c
 
 inline int
 TranspositionTable::TTEntry::getDepth() const {
-    return getBits(32, 9);
+    return getBits(32, 10);
 }
 
 inline void
 TranspositionTable::TTEntry::setDepth(int d) {
-    setBits(32, 9, d);
-}
-
-inline bool
-TranspositionTable::TTEntry::getBusy() const {
-    return getBits(41, 1);
-}
-
-inline void
-TranspositionTable::TTEntry::setBusy(bool b) {
-    setBits(41, 1, b);
+    setBits(32, 10, d);
 }
 
 inline int
@@ -424,7 +390,7 @@ TranspositionTable::TTEntry::getBits(int first, int size) const {
 
 inline void
 TranspositionTable::setHashMask(size_t s) {
-    hashMask = tableSize - 1;
+    hashMask = table.size() - 1;
     hashMask &= ~((size_t)3);
 }
 
@@ -500,7 +466,7 @@ TranspositionTable::putByte(U64 idx, U8 value) {
 
 inline U64
 TranspositionTable::byteSize() const {
-    return tableSize * sizeof(TTEntryStorage);
+    return table.size() * 16;
 }
 
 

@@ -29,14 +29,6 @@
 #include "util/util.hpp"
 #include "util/alignedAlloc.hpp"
 
-
-#ifdef HAS_BMI2
-#include <immintrin.h>
-inline U64 pext(U64 value, U64 mask) {
-    return _pext_u64(value, mask);
-}
-#endif
-
 enum Square {
     A1, B1, C1, D1, E1, F1, G1, H1,
     A2, B2, C2, D2, E2, F2, G2, H2,
@@ -101,7 +93,8 @@ public:
         return sqMask(sq0) | sqMask(squares...);
     }
 
-    /** Mirror a bitmask in the X or Y direction. */
+    /** Mirror a bitmask in the X or Y direction.
+     * This implementation is slow. Use only in initialization code. */
     static U64 mirrorX(U64 mask);
     static U64 mirrorY(U64 mask);
 
@@ -161,44 +154,13 @@ private:
 };
 
 inline U64
-BitBoard::mirrorX(U64 mask) {
-    U64 k1 = 0x5555555555555555ULL;
-    U64 k2 = 0x3333333333333333ULL;
-    U64 k3 = 0x0f0f0f0f0f0f0f0fULL;
-    U64 t = mask;
-    t = ((t >> 1) & k1) | ((t & k1) << 1);
-    t = ((t >> 2) & k2) | ((t & k2) << 2);
-    t = ((t >> 4) & k3) | ((t & k3) << 4);
-    return t;
-}
-
-inline U64
-BitBoard::mirrorY(U64 mask) {
-    U64 k1 = 0x00ff00ff00ff00ffULL;
-    U64 k2 = 0x0000ffff0000ffffULL;
-    U64 t = mask;
-    t = ((t >>  8) & k1) | ((t & k1) <<  8);
-    t = ((t >> 16) & k2) | ((t & k2) << 16);
-    t = ((t >> 32)     ) | ((t     ) << 32);
-    return t;
-}
-
-inline U64
 BitBoard::bishopAttacks(int sq, U64 occupied) {
-#ifdef HAS_BMI2
-    return bTables[sq][pext(occupied, bMasks[sq])];
-#else
     return bTables[sq][(int)(((occupied & bMasks[sq]) * bMagics[sq]) >> bBits[sq])];
-#endif
 }
 
 inline U64
 BitBoard::rookAttacks(int sq, U64 occupied) {
-#ifdef HAS_BMI2
-    return rTables[sq][pext(occupied, rMasks[sq])];
-#else
     return rTables[sq][(int)(((occupied & rMasks[sq]) * rMagics[sq]) >> rBits[sq])];
-#endif
 }
 
 inline U64

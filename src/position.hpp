@@ -101,9 +101,6 @@ public:
     /** Set a square to a piece value. */
     void setPiece(int square, int piece);
 
-    /** Remove a piece from a square. */
-    void clearPiece(int square);
-
     /**
      * Set a square to a piece value.
      * Special version that only updates enough of the state for the SEE function to be happy.
@@ -223,6 +220,8 @@ private:
     void movePieceNotPawn(int from, int to);
     void movePieceNotPawnB(int from, int to);
 
+    static U64 getRandomHashVal(int rndNo);
+
 
     int wMtrl_;              // Total value of all white pieces and pawns
     int bMtrl_;              // Total value of all black pieces and pawns
@@ -256,12 +255,14 @@ private:
 
     static U8 castleSqMask[64]; // Castle masks retained for each square
 
-    const static U64 psHashKeys[Piece::nPieceTypes][64];    // [piece][square]
+    static U64 psHashKeys[Piece::nPieceTypes][64];    // [piece][square]
 
-    const static U64 whiteHashKey = 0xc98143a7869aa213ULL;
-    const static U64 castleHashKeys[16];   // [castleMask]
-    const static U64 epHashKeys[9];        // [epFile + 1] (epFile==-1 for no ep)
-    const static U64 moveCntKeys[101];     // [min(halfMoveClock, 100)]
+    static U64 whiteHashKey;
+    static U64 castleHashKeys[16];   // [castleMask]
+    static U64 epHashKeys[9];        // [epFile + 1] (epFile==-1 for no ep)
+    static U64 moveCntKeys[101];     // [min(halfMoveClock, 100)]
+
+    static const U64 zobristRndKeys[];
 };
 
 /** For debugging. */
@@ -614,7 +615,7 @@ Position::getY(int square) {
 
 inline int
 Position::mirrorY(int square) {
-    return square ^ 0x38;
+    return square ^ 56;
 }
 
 /** Return true if (x,y) is a dark square. */

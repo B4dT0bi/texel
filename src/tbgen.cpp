@@ -613,7 +613,7 @@ TBGenerator<TBStorage>::generate(RelaxedShared<S64>& maxTimeMillis, bool verbose
 
 template <typename TBStorage>
 bool
-TBGenerator<TBStorage>::probeDTM(const Position& pos, int ply, int& score) const {
+TBGenerator<TBStorage>::probeDTM(const Position& pos, int ply, int& score) {
     TBPosition tbPos(pieceCount);
     if (!tbPos.setPosition(pos))
         return false;

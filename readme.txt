@@ -21,8 +21,6 @@ texel32old.exe : For 32-bit windows systems without SSE42 and POPCOUNT.
 texel64        : For 64-bit linux intel systems with SSE42 and POPCOUNT.
 texel64.exe    : For 64-bit windows 7 or later intel systems with SSE42 and POPCOUNT.
 texel64amd.exe : For 64-bit windows systems with SSE42 and POPCOUNT.
-texel64bmi.exe : For 64-bit windows 7 or later intel systems with BMI2 and POPCOUNT.
-texel64cl.exe  : Cluster version of texel64.exe. Requires Microsoft MPI to be installed.
 texel64old.exe : For 64-bit windows systems without SSE42 and POPCOUNT.
 
 If you need an executable for a different system, see the "Compiling" section
@@ -111,13 +109,6 @@ Clear Hash
   When activated, clears the hash table and the history heuristic table, so that
   the next search behaves as if the engine had just been started.
 
-AnalysisAgeHash
-
-  When set to false the transposition table is not "aged" when starting a new
-  search in analysis mode. This helps keeping older but deeper entries around in
-  the transposition table, which is useful when analysing a position and making
-  and un-making moves to explore the position.
-
 
 Tablebases
 ----------
@@ -177,60 +168,6 @@ on the same nodes as the threads run on. If Texel uses fewer search threads than
 there are cores in the computer, the threads will be bound to NUMA nodes such
 that there are no more than one thread per core and such that as few NUMA nodes
 as possible are used. This arrangement speeds up memory accesses.
-
-
-Cluster
--------
-
-Texel can run on computer clusters by using the MPI system. It has only been
-tested using MPICH in linux and MS-MPI in windows but should work with other MPI
-implementations as well.
-
-The pre-compiled windows executable texel64cl.exe is compiled and linked against
-MS-MPI version 8.1. It requires the MS-MPI redistributable package to be
-installed and configured on all computers in the cluster.
-
-Running on a cluster is an advanced functionality and probably requires some
-knowledge of cluster systems to set up.
-
-Texel uses a so called hybrid MPI design. This means that it uses a single MPI
-process per computer. On each computer it uses threads and shared memory, and
-optionally NUMA awareness.
-
-After texel has been started, use the "Threads" UCI option to control the total
-number of search threads to use. Texel automatically decides how many threads to
-use for each computer, and can also handle the case where different computers
-have different number of CPUs and cores.
-
-* Example using MPICH and linux:
-
-If there are 4 linux computers called host1, host2, host3, host4 and
-MPICH is installed on all computers, start Texel like this:
-
-  mpiexec -hosts host1,host2,host3,host4 /path/to/texel
-
-Note that /path/to/texel must be valid for all computers in the cluster, so
-either install texel on all computers or install it on a network disk that is
-mounted on all computers.
-
-Note that it must be possible to ssh from host1 to the other hosts without
-specifying a password. Use for example ssh-agent and ssh-add to achieve this.
-
-* Example using MS-MPI and windows:
-
-If there are two computers called host1 and host2 and MS-MPI is installed on
-both computers, proceed as follows:
-
-1. On all computers, log in as the same user.
-2. On all computers, add firewall exceptions to allow the programs mpiexec and
-   smpd (located in C:\Program Files\Microsoft MPI\Bin) to communicate over the
-   network.
-3. On all computers, start a command prompt and execute:
-   smpd -d 0
-4. Make sure texel is installed in the same directory on all computers.
-5. On the host1 computer, start a command prompt and execute:
-   cd /directory/where/texel/is/installed
-   mpiexec -hosts 2 host1 host2 texel64cl.exe
 
 
 Compiling

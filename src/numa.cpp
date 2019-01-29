@@ -51,45 +51,9 @@ Numa::instance() {
 Numa::Numa() {
 #ifdef NUMA
 #ifdef _WIN32
+    int threads = 0;
     int nodes = 0;
     int cores = 0;
-    int threads = 0;
-    getConcurrency(nodes, cores, threads);
-    for (int n = 0; n < nodes; n++)
-        for (int i = 0; i < cores / nodes; i++)
-            threadToNode.push_back(n);
-    for (int t = 0; t < threads - cores; t++)
-        threadToNode.push_back(t % nodes);
-#else
-    std::vector<NodeInfo> nodes;
-    getNodeInfo(nodes);
-
-    for (const NodeInfo& ni : nodes)
-        for (int i = 0; i < ni.numCores; i++)
-            threadToNode.push_back(ni.node);
-
-    bool done = false;
-    while (!done) {
-        done = true;
-        for (NodeInfo& ni : nodes) {
-            if (ni.numThreads > ni.numCores) {
-                threadToNode.push_back(ni.node);
-                ni.numThreads--;
-                done = false;
-            }
-        }
-    }
-#endif
-#endif
-}
-
-void
-Numa::getConcurrency(int& nodes, int& cores, int& threads) {
-    threads = 0;
-    nodes = 0;
-    cores = 0;
-#if defined(NUMA) || defined(CLUSTER)
-#ifdef _WIN32
     DWORD returnLength = 0;
     DWORD byteOffset = 0;
 
@@ -157,62 +121,34 @@ Numa::getConcurrency(int& nodes, int& cores, int& threads) {
     }
 #endif
     free(buffer);
+
+    for (int n = 0; n < nodes; n++)
+        for (int i = 0; i < cores / nodes; i++)
+            threadToNode.push_back(n);
+    for (int t = 0; t < threads - cores; t++)
+        threadToNode.push_back(t % nodes);
 #else
-    std::vector<NodeInfo> niVec;
-    getNodeInfo(niVec);
-    nodes = niVec.size();
-    for (const NodeInfo& ni : niVec) {
-        cores += ni.numCores;
-        threads += ni.numThreads;
-    }
-#endif
-#endif
-}
+    if (numa_available() == -1)
+        return;
 
-void
-Numa::getNodeInfo(std::vector<NodeInfo>& nodes) {
-#if !defined(_WIN32)
-#if defined(NUMA)
-    if (numa_available() != -1) {
-        const int maxNode = numa_max_node();
-        if (maxNode > 0) {
-            std::set<int> nodesToUse;
-            bitmask* runNodes = numa_get_run_node_mask();
-            int nBits = numa_bitmask_nbytes(runNodes) * 8;
-            for (int i = 0; i < nBits; i++)
-                if (numa_bitmask_isbitset(runNodes, i))
-                    nodesToUse.insert(i);
+    const int maxNode = numa_max_node();
+    if (maxNode == 0)
+        return;
 
-            std::map<int, NodeInfo> nodeInfo;
-            getNodeInfoMap(maxNode, nodeInfo);
+    std::set<int> nodesToUse;
+    bitmask* runNodes = numa_get_run_node_mask();
+    int nBits = numa_bitmask_nbytes(runNodes) * 8;
+    for (int i = 0; i < nBits; i++)
+        if (numa_bitmask_isbitset(runNodes, i))
+            nodesToUse.insert(i);
 
-            for (int node : nodesToUse) {
-                auto it = nodeInfo.find(node);
-                if (it != nodeInfo.end() && it->first != -1)
-                    nodes.push_back(it->second);
-            }
-            std::sort(nodes.begin(), nodes.end(), [](const NodeInfo& a, const NodeInfo& b) {
-                if (a.numCores != b.numCores)
-                    return a.numCores > b.numCores;
-                return a.numThreads > b.numThreads;
-            });
-            return;
-        }
-    }
-#endif
-#ifdef CLUSTER
+    struct NodeInfo {
+        int node = 0;
+        int numCores = 0;
+        int numThreads = 0;
+    };
+
     std::map<int, NodeInfo> nodeInfo;
-    getNodeInfoMap(-1, nodeInfo);
-    for (auto& e : nodeInfo)
-        nodes.push_back(e.second);
-#endif
-#endif
-}
-
-void
-Numa::getNodeInfoMap(int maxNode, std::map<int, NodeInfo>& nodeInfo) {
-#if !defined(_WIN32)
-#if defined(NUMA) || defined(CLUSTER)
     std::string baseDir("/sys/devices/system/cpu");
     for (int i = 0; ; i++) {
         std::string cpuDir(baseDir + "/cpu" + num2Str(i));
@@ -234,6 +170,8 @@ Numa::getNodeInfoMap(int maxNode, std::map<int, NodeInfo>& nodeInfo) {
                 break;
             }
         }
+        if (node < 0)
+            continue;
 
         nodeInfo[node].node = node;
         nodeInfo[node].numThreads++;
@@ -251,6 +189,34 @@ Numa::getNodeInfoMap(int maxNode, std::map<int, NodeInfo>& nodeInfo) {
                     if (i == num)
                         nodeInfo[node].numCores++;
                 }
+            }
+        }
+    }
+
+    std::vector<NodeInfo> nodes;
+    for (int node : nodesToUse) {
+        auto it = nodeInfo.find(node);
+        if (it != nodeInfo.end())
+            nodes.push_back(it->second);
+    }
+    std::sort(nodes.begin(), nodes.end(), [](const NodeInfo& a, const NodeInfo& b) {
+        if (a.numCores != b.numCores)
+            return a.numCores > b.numCores;
+        return a.numThreads > b.numThreads;
+    });
+
+    for (const NodeInfo& ni : nodes)
+        for (int i = 0; i < ni.numCores; i++)
+            threadToNode.push_back(ni.node);
+
+    bool done = false;
+    while (!done) {
+        done = true;
+        for (NodeInfo& ni : nodes) {
+            if (ni.numThreads > ni.numCores) {
+                threadToNode.push_back(ni.node);
+                ni.numThreads--;
+                done = false;
             }
         }
     }
@@ -298,5 +264,7 @@ Numa::bindThread(int threadNo) const {
 
 bool
 Numa::isMainNode(int threadNo) const {
-    return nodeForThread(threadNo) == nodeForThread(0);
+    if (threadToNode.empty())
+        return true; // Not NUMA hardware
+    return nodeForThread(threadNo) == threadToNode[0];
 }

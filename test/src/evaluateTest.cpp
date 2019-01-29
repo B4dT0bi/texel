@@ -28,7 +28,6 @@
 #include "evaluate.hpp"
 #include "position.hpp"
 #include "textio.hpp"
-#include "parameters.hpp"
 
 #include "cute.h"
 
@@ -421,48 +420,6 @@ EvaluateTest::testKingSafety() {
     evalFEN("rn3r1k/ppp1b1pp/3p1n2/2b1p3/4P1q1/5pP1/PPPP1P1P/RNB1QRKB w - - 0 1");
 }
 
-static void
-evalEGConsistency(const std::string& fen, const std::string& wSq, int wPiece,
-                  const std::string& bSq, int bPiece, int fuzz) {
-    Position pos = TextIO::readFEN(fen);
-    int s00 = evalWhite(pos);
-    std::string f00 = TextIO::toFEN(pos);
-    pos.setPiece(TextIO::getSquare(wSq), wPiece);
-    int s10 = evalWhite(pos);
-    std::string f10 = TextIO::toFEN(pos);
-    pos.setPiece(TextIO::getSquare(bSq), bPiece);
-    int s11 = evalWhite(pos);
-    std::string f11 = TextIO::toFEN(pos);
-    pos.setPiece(TextIO::getSquare(wSq), Piece::EMPTY);
-    int s01 = evalWhite(pos);
-    std::string f01 = TextIO::toFEN(pos);
-    ASSERTM(f10 + " >= " + f00, s10 >= s00 - fuzz);
-    ASSERTM(f01 + " <= " + f00, s01 <= s00 + fuzz);
-    ASSERTM(f10 + " >= " + f11, s10 >= s11 - fuzz);
-    ASSERTM(f01 + " <= " + f11, s01 <= s11 + fuzz);
-}
-
-static int
-evalEgFen(const std::string& fen, int fuzz = 0) {
-    for (int wp = Piece::WQUEEN; wp <= Piece::WPAWN; wp++) {
-        for (int bp = Piece::BQUEEN; bp <= Piece::BPAWN; bp++) {
-            evalEGConsistency(fen, "a2", wp, "a7", bp, fuzz);
-            for (int wp2 = Piece::WQUEEN; wp2 <= Piece::WPAWN; wp2++) {
-                for (int bp2 = Piece::BQUEEN; bp2 <= Piece::BPAWN; bp2++) {
-                    Position pos = TextIO::readFEN(fen);
-                    pos.setPiece(TextIO::getSquare("a2"), wp);
-                    evalEGConsistency(TextIO::toFEN(pos), "b2", wp2, "b7", bp2, fuzz);
-                    pos.setPiece(TextIO::getSquare("a7"), bp);
-                    evalEGConsistency(TextIO::toFEN(pos), "b2", wp2, "b7", bp2, fuzz);
-                    pos.setPiece(TextIO::getSquare("a2"), Piece::EMPTY);
-                    evalEGConsistency(TextIO::toFEN(pos), "b2", wp2, "b7", bp2, fuzz);
-                }
-            }
-        }
-    }
-    return evalFEN(fen);
-}
-
 /**
  * Test of endGameEval method, of class Evaluate.
  */
@@ -552,44 +509,6 @@ EvaluateTest::testEndGameEval() {
         int score5 = evalFEN("8/2n5/k7/P7/RK6/8/8/8 w - - 0 1", true);
         ASSERT(score5 > 400);
     }
-
-    { // Test KQKRM+pawns
-        int score = evalFEN("8/3pk3/2b1r3/4P3/3QK3/8/8/8 w - - 0 1");
-        ASSERT(score < pV / 2);
-        score = evalFEN("8/3pk3/2b2r2/5P2/3Q1K2/8/8/8 w - - 0 1");
-        ASSERT(score > pV);
-        score = evalFEN("8/3p1k2/2b2r2/8/5P2/3QK3/8/8 w - - 0 1");
-        ASSERT(score > pV);
-        score = evalFEN("8/3p1k2/2b5/8/8/5r2/3QKP2/8 w - - 0 1");
-        ASSERT(score < pV / 2);
-        score = evalFEN("8/4pk2/5b2/6p1/3r2Pp/8/2Q1K2P/8 w - - 0 1");
-        ASSERT(score < pV / 5);
-        score = evalFEN("8/4pk2/5b2/6p1/3r3p/8/2Q1K1PP/8 w - - 0 1");
-        ASSERT(score > pV / 2);
-        score = evalFEN("8/4p1k1/4Pb2/5Pp1/3r2Pp/8/2Q1K2P/8 w - - 0 1");
-        ASSERT(score < pV);
-        score = evalFEN("8/4p1k1/4Pb2/5Pp1/3r2Pp/3P4/2Q1K2P/8 w - - 0 1");
-        ASSERT(score < pV);
-        score = evalFEN("7k/3p4/2p5/1r3b2/8/8/1P1Q1P2/4K3 w - - 0 1");
-        ASSERT(score < pV / 2);
-        score = evalFEN("8/5p2/5Bp1/1k3qP1/3R4/4K3/8/8 w - - 0 1");
-        ASSERT(score > -pV / 2);
-
-        score = evalFEN("7k/3p4/2p1n3/2P5/3r4/2QP1K2/8/8 w - - 0 1");
-        ASSERT(score < pV / 2);
-        score = evalFEN("7k/3p4/2p1n3/2P5/3r4/2Q2K2/4P3/8 w - - 0 1");
-        ASSERT(score > pV * 2);
-        score = evalFEN("8/3p1k2/2p1n3/2P5/3rP3/2Q2K2/8/8 w - - 0 1");
-        ASSERT(score < pV / 2);
-    }
-
-    { // Test KQKNNNN
-        int score = evalFEN("3nk3/3nnn2/8/8/3QK3/8/8/8 w - - 0 1");
-        ASSERT(score < -250);
-        score = evalFEN("8/5K2/8/3nk3/3nnn2/8/1Q6/8 b - - 0 1");
-        ASSERT(score < -450);
-        evalEgFen("3nk3/3nnn2/8/8/3QK3/8/8/8 w - - 0 1");
-    }
 }
 
 void
@@ -613,6 +532,48 @@ EvaluateTest::testEndGameSymmetry() {
         int score4 = evalFEN("8/8/8/2k4K/2r4R/8/8/8 w - - 0 1", true);
         ASSERT_EQUAL(score4, score1);
     }
+}
+
+static void
+evalEGConsistency(const std::string& fen, const std::string& wSq, int wPiece,
+                  const std::string& bSq, int bPiece, int fuzz) {
+    Position pos = TextIO::readFEN(fen);
+    int s00 = evalWhite(pos);
+    std::string f00 = TextIO::toFEN(pos);
+    pos.setPiece(TextIO::getSquare(wSq), wPiece);
+    int s10 = evalWhite(pos);
+    std::string f10 = TextIO::toFEN(pos);
+    pos.setPiece(TextIO::getSquare(bSq), bPiece);
+    int s11 = evalWhite(pos);
+    std::string f11 = TextIO::toFEN(pos);
+    pos.setPiece(TextIO::getSquare(wSq), Piece::EMPTY);
+    int s01 = evalWhite(pos);
+    std::string f01 = TextIO::toFEN(pos);
+    ASSERTM(f10 + " >= " + f00, s10 >= s00 - fuzz);
+    ASSERTM(f01 + " <= " + f00, s01 <= s00 + fuzz);
+    ASSERTM(f10 + " >= " + f11, s10 >= s11 - fuzz);
+    ASSERTM(f01 + " <= " + f11, s01 <= s11 + fuzz);
+}
+
+static int
+evalEgFen(const std::string& fen, int fuzz = 0) {
+    for (int wp = Piece::WQUEEN; wp <= Piece::WPAWN; wp++) {
+        for (int bp = Piece::BQUEEN; bp <= Piece::BPAWN; bp++) {
+            evalEGConsistency(fen, "a2", wp, "a7", bp, fuzz);
+            for (int wp2 = Piece::WQUEEN; wp2 <= Piece::WPAWN; wp2++) {
+                for (int bp2 = Piece::BQUEEN; bp2 <= Piece::BPAWN; bp2++) {
+                    Position pos = TextIO::readFEN(fen);
+                    pos.setPiece(TextIO::getSquare("a2"), wp);
+                    evalEGConsistency(TextIO::toFEN(pos), "b2", wp2, "b7", bp2, fuzz);
+                    pos.setPiece(TextIO::getSquare("a7"), bp);
+                    evalEGConsistency(TextIO::toFEN(pos), "b2", wp2, "b7", bp2, fuzz);
+                    pos.setPiece(TextIO::getSquare("a2"), Piece::EMPTY);
+                    evalEGConsistency(TextIO::toFEN(pos), "b2", wp2, "b7", bp2, fuzz);
+                }
+            }
+        }
+    }
+    return evalFEN(fen);
 }
 
 void

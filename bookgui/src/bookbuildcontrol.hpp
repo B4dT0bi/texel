@@ -27,7 +27,6 @@
 #define BOOKBUILDCONTROL_HPP_
 
 #include "bookbuild.hpp"
-#include "search.hpp"
 #include <vector>
 #include <set>
 #include <memory>
@@ -53,8 +52,7 @@ public:
     /** Changes that requires the GUI to be updated. */
     enum class Change {
         TREE,                // A book node has been updated after a finished search.
-        QUEUE,               // The set of current searches has changed.
-        QUEUE_SIZE,          // The number of pending searches has changed.
+        QUEUE,               // The queue of pending searches has changed.
         PV,                  // The analysis principal variation has changed.
         PROCESSING_COMPLETE, // PGN import or book save complete.
         OPEN_COMPLETE        // Reading opening book is complete.
@@ -184,10 +182,8 @@ private:
     // Data used by the analysis thread.
     std::shared_ptr<std::thread> engineThread;
     std::shared_ptr<Search> sc;
-    std::unique_ptr<Search::Listener> scListener;
     TranspositionTable tt;
-    Notifier notifier;
-    ThreadCommunicator comm;
+    ParallelData pd;
     KillerTable kt;
     History ht;
     std::unique_ptr<Evaluate::EvalHashTables> et;
