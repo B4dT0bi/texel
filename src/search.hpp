@@ -142,8 +142,7 @@ public:
     void scoreMoveList(MoveList& moves, int ply, int startIdx = 0);
 
     /** Set search tree information for a given ply. */
-    void setSearchTreeInfo(int ply, const SearchTreeInfo& sti,
-                           U64 rootNodeIdx);
+    void setSearchTreeInfo(int ply, const SearchTreeInfo& sti, U64 rootNodeIdx);
 
     /** Get total number of nodes searched by this thread. */
     S64 getTotalNodesThisThread() const;
@@ -286,7 +285,7 @@ private:
     S64 maxNodes;              // Maximum number of nodes to search (approximately)
     int minProbeDepth;         // Minimum depth to probe endgame tablebases.
     int nodesToGo;             // Number of nodes until next time check
-    RelaxedShared<int> nodesBetweenTimeCheck; // How often to check remaining time
+    int nodesBetweenTimeCheck; // How often to check remaining time
 
     // Reduced strength variables
     int strength;              // Strength (0-1000)

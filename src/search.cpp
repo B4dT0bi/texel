@@ -288,6 +288,7 @@ Search::negaScoutRoot(bool tb, int alpha, int beta, int ply, int depth,
     SearchTreeInfo sti = searchTreeInfo[ply-1];
     jobId++;
     comm.sendStartSearch(jobId, sti, alpha, beta, depth);
+    U64 nodeIdx = logFile.peekNextNodeIdx();
     Position pos0(pos);
     int posHashListSize0 = posHashListSize;
     try {
@@ -302,7 +303,7 @@ Search::negaScoutRoot(bool tb, int alpha, int beta, int ply, int depth,
         int score = res.getScore();
         int evalScore = UNKNOWN_SCORE;
         int type = score <= alpha ? TType::T_LE : score >= beta ? TType::T_GE : TType::T_EXACT;
-        logFile.logNodeEnd(searchTreeInfo[ply].nodeIdx, score, type, evalScore, hKey);
+        logFile.logNodeEnd(nodeIdx, score, type, evalScore, hKey);
         return score;
     }
 }
@@ -830,7 +831,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
             bool isCapture = (pos.getPiece(m.to()) != Piece::EMPTY);
             bool isPromotion = (m.promoteTo() != Piece::EMPTY);
             int sVal = std::numeric_limits<int>::min();
-            bool mayReduce = (m.score() < 53) && (!isCapture || m.score() < 0) && !isPromotion;
+            bool mayReduce = (m.score() < 30) && (!isCapture || m.score() < 0) && !isPromotion;
             bool givesCheck = MoveGen::givesCheck(pos, m);
             bool doFutility = false;
             if ((pass == 0) && mayReduce && haveLegalMoves && !givesCheck && !passedPawnPush(pos, m)) {
@@ -879,6 +880,8 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
                                 lmr += 1; // Reduce expected cut nodes more
                             else if (badPrevMove)
                                 lmr += 1;
+                            else if (m.score() < 20)
+                                lmr += 1; // Bad history score
                         }
                     }
                 } else {
