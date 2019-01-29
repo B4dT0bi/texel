@@ -67,6 +67,7 @@ private:
         std::atomic<U64> data;
         TTEntryStorage();
         TTEntryStorage(const TTEntryStorage& a);
+        TTEntryStorage& operator=(const TTEntryStorage& a) = delete;
     };
     static_assert(sizeof(TTEntryStorage) == 16, "TTEntryStorage size wrong");
 
@@ -74,7 +75,7 @@ public:
     /** A local copy of a transposition table entry. */
     class TTEntry {
     public:
-        TTEntry() {}
+        TTEntry() : key(0), data(0) {}
         TTEntry(U64 key, U64 data) : key(key), data(data) {}
 
         /** Set type to T_EMPTY. */
@@ -314,12 +315,12 @@ TranspositionTable::TTEntry::getData() const {
 inline void
 TranspositionTable::TTEntry::getMove(Move& m) const {
     int move = getBits(0, 16);
-    m.setMove(move & 63, (move >> 6) & 63, (move >> 12) & 15, m.score());
+    m.setFromCompressed(move);
 }
 
 inline void
 TranspositionTable::TTEntry::setMove(const Move& m) {
-    int move = (short)(m.from() + (m.to() << 6) + (m.promoteTo() << 12));
+    int move = m.getCompressedMove();
     setBits(0, 16, move);
 }
 

@@ -59,7 +59,7 @@ Book::getBookMove(Position& pos, Move& out) {
     for (const BookEntry& be : bookMoves) {
         bool contains = false;
         for (int mi = 0; mi < legalMoves.size; mi++)
-            if (legalMoves[mi].equals(be.move)) {
+            if (legalMoves[mi] == be.move) {
                 contains = true;
                 break;
             }
@@ -143,15 +143,13 @@ Book::getBookEntries(const Position& pos, std::vector<BookEntry>& bookMoves) con
         }
 
         // Read all entries with matching hash key
-        int entNo = hi;
-        while (entNo < numEntries) {
+        for (int entNo = hi; entNo < numEntries; entNo++) {
             readEntry(entNo, ent);
             PolyglotBook::deSerialize(ent, entHash, entMove, entWeight);
             if (entHash != key)
                 break;
             Move m = PolyglotBook::getMove(pos, entMove);
             bookMoves.push_back(BookEntry(m, entWeight));
-            entNo++;
         }
     } else {
         BookMap::iterator it = bookMap.find(pos.zobristHash());
@@ -210,7 +208,7 @@ Book::addToBook(const Position& pos, const Move& moveToAdd) {
     std::vector<BookEntry>& ent = it->second;
     for (size_t i = 0; i < ent.size(); i++) {
         BookEntry& be = ent[i];
-        if (be.move.equals(moveToAdd)) {
+        if (be.move == moveToAdd) {
             be.count++;
             return;
         }

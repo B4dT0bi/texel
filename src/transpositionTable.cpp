@@ -83,7 +83,6 @@ TranspositionTable::clear() {
     tbGen.reset();
     notUsedCnt = 0;
     TTEntry ent;
-    ent.clear();
     for (size_t i = 0; i < tableSize; i++)
         ent.store(table[i]);
 }
@@ -105,7 +104,6 @@ TranspositionTable::insert(U64 key, const Move& sm, int type, int ply, int depth
     if (depth < 0) depth = 0;
     size_t idx0 = getIndex(key);
     TTEntry ent, tmp;
-    ent.clear();
     size_t idx = idx0;
     for (int i = 0; i < 4; i++) {
         size_t idx1 = idx0 + i;
@@ -172,7 +170,6 @@ TranspositionTable::extractPVMoves(const Position& rootPos, const Move& mFirst, 
             break;
         hashHistory.push_back(pos.zobristHash());
         TTEntry ent;
-        ent.clear();
         probe(pos.historyHash(), ent);
         if (ent.getType() == TType::T_EMPTY)
             break;
@@ -182,7 +179,7 @@ TranspositionTable::extractPVMoves(const Position& rootPos, const Move& mFirst, 
         MoveGen::removeIllegal(pos, moves);
         bool contains = false;
         for (int mi = 0; mi < moves.size; mi++)
-            if (moves[mi].equals(m)) {
+            if (moves[mi] == m) {
                 contains = true;
                 break;
             }
@@ -198,7 +195,6 @@ TranspositionTable::extractPV(const Position& posIn) {
     Position pos(posIn);
     bool first = true;
     TTEntry ent;
-    ent.clear();
     probe(pos.historyHash(), ent);
     UndoInfo ui;
     std::vector<U64> hashHistory;
@@ -211,7 +207,7 @@ TranspositionTable::extractPV(const Position& posIn) {
         MoveGen::removeIllegal(pos, moves);
         bool valid = false;
         for (int mi = 0; mi < moves.size; mi++)
-            if (moves[mi].equals(m)) {
+            if (moves[mi] == m) {
                 valid = true;
                 break;
             }

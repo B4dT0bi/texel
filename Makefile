@@ -97,19 +97,19 @@ OBJS_BOOKGUI_DEF = $(patsubst %.cpp,objdef/%.o,$(SRC_BOOKGUI))
 #CXX		= mpic++
 CXX		= g++
 FLAGS		= -O3 -Wall -pthread $(INC) -march=corei7 -Wno-misleading-indentation \
-		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT -DUSE_LARGE_PAGES -fno-PIC
+		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_BMI2 -mbmi2 \
+                  -DHAS_RT -DUSE_LARGE_PAGES -DNUMA -fno-PIC
 CXXFLAGS	= -std=c++11 $(FLAGS)
 #CC		= mpicc
 CC		= gcc
 CFLAGS		= $(FLAGS)
-LDFLAGS		= -pthread -lrt
+LDFLAGS		= -pthread -lrt -lnuma
 STRIP		= strip
 OBJS_32		= $(patsubst %.cpp,obj32/%.o,$(SRC))
 OBJS_64		= $(patsubst %.cpp,obj64/%.o,$(SRC))
 OBJS_C_32	= $(patsubst %.c,obj32/%.o,$(SRC_GTB))
 OBJS_C_64	= $(patsubst %.c,obj64/%.o,$(SRC_GTB))
-#FLAGS		+= -DNUMA -DCLUSTER
-#LDFLAGS	+= -lnuma
+#FLAGS		+= -DCLUSTER
 
 
 # Definitions used by the "texel64.exe" target
@@ -266,7 +266,7 @@ texel.7z: FORCE $(ALL_EXE) strip
 		bookgui/src/*.?pp bookgui/src/*.xml bookgui/src/ChessCases.ttf \
 		$(ALL_EXE) texelbook.bin texel$${VER}/; \
 	 chmod -R ug+w texel$${VER} ; \
-	 rm texel$${VER}/bookgui/src/resource.cpp ; \
+	 rm -f texel$${VER}/bookgui/src/resource.cpp ; \
 	 7za a texel$${VER}.7z texel$${VER} ; \
 	 rm -rf texel$${VER})
 

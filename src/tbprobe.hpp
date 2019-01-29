@@ -28,6 +28,7 @@
 
 #include "transpositionTable.hpp"
 #include "position.hpp"
+#include "parameters.hpp"
 
 #include <string>
 
@@ -60,6 +61,9 @@ public:
      *             but is restored to original state before function returns.
      */
     static bool tbProbe(Position& pos, int ply, int alpha, int beta,
+                        const TranspositionTable& tt,
+                        TranspositionTable::TTEntry& ent);
+    static bool tbProbe(Position& pos, int ply, int alpha, int beta, int depth,
                         const TranspositionTable& tt,
                         TranspositionTable::TTEntry& ent);
 
@@ -137,9 +141,17 @@ private:
                         const int nPieces);
 
     static void initWDLBounds();
+
+    /** Maximum DTZ value for a given material configuration. */
     static int getMaxDTZ(int matId);
+    /** Return true if DTZ values are approximate for this material configuration. */
+    static bool approxDTZ(int matId);
+
+    /** Get upper bound on longest mate in all possible material configurations
+     *  after the next zeroing move. */
     static int getMaxSubMate(const Position& pos);
     static int getMaxSubMate(std::vector<int>& pieces, int pawnMoves);
+
     static void initMaxDTM();
     static void initMaxDTZ();
 
@@ -175,5 +187,18 @@ TBProbe::tbProbe(Position& pos, int ply, int alpha, int beta,
     return tbProbe(pos, ply, alpha, beta, tt, ent, nPieces);
 }
 
+inline bool
+TBProbe::tbProbe(Position& pos, int ply, int alpha, int beta, int depth,
+                 const TranspositionTable& tt,
+                 TranspositionTable::TTEntry& ent) {
+    const int nPieces = pos.nPieces();
+    if (nPieces > TBProbeData::maxPieces)
+        return false;
+    if (nPieces == 7 && depth < UciParams::minProbeDepth7->getIntPar())
+        return false;
+    if (nPieces == 6 && depth < UciParams::minProbeDepth6->getIntPar())
+        return false;
+    return tbProbe(pos, ply, alpha, beta, tt, ent, nPieces);
+}
 
 #endif /* TBPROBE_HPP_ */

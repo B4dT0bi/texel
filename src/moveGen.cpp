@@ -25,6 +25,13 @@
 
 #include "moveGen.hpp"
 
+//#define MOVELIST_DEBUG
+
+#ifdef MOVELIST_DEBUG
+# include <set>
+# include "textio.hpp"
+#endif
+
 void
 MoveList::filter(const std::vector<Move>& searchMoves)
 {
@@ -71,7 +78,7 @@ MoveGen::pseudoLegalMoves(const Position& pos, MoveList& moveList) {
     // King moves
     {
         int sq = pos.getKingSq(wtm);
-        U64 m = BitBoard::kingAttacks[sq] & ~pos.colorBB(wtm);
+        U64 m = BitBoard::kingAttacks(sq) & ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
         const int k0 = wtm ? E1 : E8;
         if (sq == k0) {
@@ -100,7 +107,7 @@ MoveGen::pseudoLegalMoves(const Position& pos, MoveList& moveList) {
     U64 knights = pos.pieceTypeBB(MyColor::KNIGHT);
     while (knights != 0) {
         int sq = BitBoard::extractSquare(knights);
-        U64 m = BitBoard::knightAttacks[sq] & ~pos.colorBB(wtm);
+        U64 m = BitBoard::knightAttacks(sq) & ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
     }
 
@@ -144,19 +151,19 @@ MoveGen::checkEvasions(const Position& pos, MoveList& moveList) {
     const U64 occupied = pos.occupiedBB();
 
     const int kingSq = pos.getKingSq(wtm);
-    U64 kingThreats = pos.pieceTypeBB(OtherColor::KNIGHT) & BitBoard::knightAttacks[kingSq];
+    U64 kingThreats = pos.pieceTypeBB(OtherColor::KNIGHT) & BitBoard::knightAttacks(kingSq);
     U64 rookPieces = pos.pieceTypeBB(OtherColor::ROOK, OtherColor::QUEEN);
     if (rookPieces != 0)
         kingThreats |= rookPieces & BitBoard::rookAttacks(kingSq, occupied);
     U64 bishPieces = pos.pieceTypeBB(OtherColor::BISHOP, OtherColor::QUEEN);
     if (bishPieces != 0)
         kingThreats |= bishPieces & BitBoard::bishopAttacks(kingSq, occupied);
-    const U64 myPawnAttacks = wtm ? BitBoard::wPawnAttacks[kingSq] : BitBoard::bPawnAttacks[kingSq];
+    const U64 myPawnAttacks = wtm ? BitBoard::wPawnAttacks(kingSq) : BitBoard::bPawnAttacks(kingSq);
     kingThreats |= pos.pieceTypeBB(OtherColor::PAWN) & myPawnAttacks;
     U64 validTargets = 0;
     if ((kingThreats != 0) && ((kingThreats & (kingThreats-1)) == 0)) { // Exactly one attacking piece
         int threatSq = BitBoard::firstSquare(kingThreats);
-        validTargets = kingThreats | BitBoard::squaresBetween[kingSq][threatSq];
+        validTargets = kingThreats | BitBoard::squaresBetween(kingSq, threatSq);
     }
     validTargets |= pos.pieceTypeBB(OtherColor::KING);
     // Queen moves
@@ -187,7 +194,7 @@ MoveGen::checkEvasions(const Position& pos, MoveList& moveList) {
     // King moves
     {
         int sq = pos.getKingSq(wtm);
-        U64 m = BitBoard::kingAttacks[sq] & ~pos.colorBB(wtm);
+        U64 m = BitBoard::kingAttacks(sq) & ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
     }
 
@@ -195,7 +202,7 @@ MoveGen::checkEvasions(const Position& pos, MoveList& moveList) {
     U64 knights = pos.pieceTypeBB(MyColor::KNIGHT);
     while (knights != 0) {
         int sq = BitBoard::extractSquare(knights);
-        U64 m = BitBoard::knightAttacks[sq] & ~pos.colorBB(wtm) & validTargets;
+        U64 m = BitBoard::knightAttacks(sq) & ~pos.colorBB(wtm) & validTargets;
         addMovesByMask(moveList, sq, m);
     }
 
@@ -236,9 +243,9 @@ MoveGen::checkEvasions(const Position& pos, MoveList& moveList) {
         removeIllegal(tmpPos, allMoves);
         std::set<std::string> evMoves;
         for (int i = 0; i < moveList.size; i++)
-            evMoves.insert(TextIO::moveToUCIString(moveList.m[i]));
+            evMoves.insert(TextIO::moveToUCIString(moveList[i]));
         for (int i = 0; i < allMoves.size; i++)
-            assert(evMoves.find(TextIO::moveToUCIString(allMoves.m[i])) != evMoves.end());
+            assert(evMoves.find(TextIO::moveToUCIString(allMoves[i])) != evMoves.end());
     }
 #endif
 }
@@ -296,7 +303,7 @@ MoveGen::pseudoLegalCapturesAndChecks(const Position& pos, MoveList& moveList) {
     // King moves
     {
         int sq = pos.getKingSq(wtm);
-        U64 m = BitBoard::kingAttacks[sq];
+        U64 m = BitBoard::kingAttacks(sq);
         m &= ((discovered & (1ULL<<sq)) == 0) ? pos.colorBB(!wtm) : ~pos.colorBB(wtm);
         addMovesByMask(moveList, sq, m);
         const int k0 = wtm ? E1 : E8;
@@ -324,10 +331,10 @@ MoveGen::pseudoLegalCapturesAndChecks(const Position& pos, MoveList& moveList) {
 
     // Knight moves
     U64 knights = pos.pieceTypeBB(MyColor::KNIGHT);
-    U64 kKnightAtk = BitBoard::knightAttacks[oKingSq];
+    U64 kKnightAtk = BitBoard::knightAttacks(oKingSq);
     while (knights != 0) {
         int sq = BitBoard::extractSquare(knights);
-        U64 m = BitBoard::knightAttacks[sq] & ~pos.colorBB(wtm);
+        U64 m = BitBoard::knightAttacks(sq) & ~pos.colorBB(wtm);
         if ((discovered & (1ULL<<sq)) == 0) m &= (pos.colorBB(!wtm) | kKnightAtk);
         addMovesByMask(moveList, sq, m);
     }
@@ -352,9 +359,9 @@ MoveGen::pseudoLegalCapturesAndChecks(const Position& pos, MoveList& moveList) {
 
         // Normal checks
         m = ((pawns & ~pawnAll) << 8) & ~occupied;
-        addPawnMovesByMask<wtm>(moveList, m & BitBoard::bPawnAttacks[oKingSq], -8, false);
+        addPawnMovesByMask<wtm>(moveList, m & BitBoard::bPawnAttacks(oKingSq), -8, false);
         m = ((m & BitBoard::maskRow3) << 8) & ~occupied;
-        addPawnDoubleMovesByMask(moveList, m & BitBoard::bPawnAttacks[oKingSq], -16);
+        addPawnDoubleMovesByMask(moveList, m & BitBoard::bPawnAttacks(oKingSq), -16);
     } else {
         // Captures
         U64 m = (pawns >> 9) & BitBoard::maskAToGFiles & (pos.colorBB(!wtm) | epMask);
@@ -371,9 +378,9 @@ MoveGen::pseudoLegalCapturesAndChecks(const Position& pos, MoveList& moveList) {
 
         // Normal checks
         m = ((pawns & ~pawnAll) >> 8) & ~occupied;
-        addPawnMovesByMask<wtm>(moveList, m & BitBoard::wPawnAttacks[oKingSq], 8, false);
+        addPawnMovesByMask<wtm>(moveList, m & BitBoard::wPawnAttacks(oKingSq), 8, false);
         m = ((m & BitBoard::maskRow6) >> 8) & ~occupied;
-        addPawnDoubleMovesByMask(moveList, m & BitBoard::wPawnAttacks[oKingSq], 16);
+        addPawnDoubleMovesByMask(moveList, m & BitBoard::wPawnAttacks(oKingSq), 16);
     }
 }
 
@@ -414,13 +421,13 @@ MoveGen::pseudoLegalCaptures(const Position& pos, MoveList& moveList) {
     U64 knights = pos.pieceTypeBB(MyColor::KNIGHT);
     while (knights != 0) {
         int sq = BitBoard::extractSquare(knights);
-        U64 m = BitBoard::knightAttacks[sq] & pos.colorBB(!wtm);
+        U64 m = BitBoard::knightAttacks(sq) & pos.colorBB(!wtm);
         addMovesByMask(moveList, sq, m);
     }
 
     // King moves
     int sq = pos.getKingSq(wtm);
-    U64 m = BitBoard::kingAttacks[sq] & pos.colorBB(!wtm);
+    U64 m = BitBoard::kingAttacks(sq) & pos.colorBB(!wtm);
     addMovesByMask(moveList, sq, m);
 
     // Pawn moves
@@ -522,7 +529,7 @@ MoveGen::givesCheck(const Position& pos, const Move& m) {
         }
     } else if (p == Piece::WPAWN) {
         if (pos.getPiece(m.to()) == Piece::EMPTY) {
-            int dx = Position::getX(m.to()) - Position::getX(m.from());
+            int dx = Square::getX(m.to()) - Square::getX(m.from());
             if (dx != 0) { // en passant
                 int epSq = m.from() + dx;
                 int d3 = BitBoard::getDirection(epSq, oKingSq);
@@ -617,7 +624,7 @@ MoveGen::isLegal(Position& pos, const Move& m, bool isInCheck) {
             Piece::Type knight = pos.isWhiteMove() ? Piece::BKNIGHT : Piece::WKNIGHT;
             if (((BitBoard::rookAttacks(kSq, occupied) & toMask) == 0) &&
                 ((BitBoard::bishopAttacks(kSq, occupied) & toMask) == 0) &&
-                ((BitBoard::knightAttacks[kSq] & pos.pieceTypeBB(knight) & toMask) == 0))
+                ((BitBoard::knightAttacks(kSq) & pos.pieceTypeBB(knight) & toMask) == 0))
                 return false;
         }
         pos.makeMoveB(m, ui);

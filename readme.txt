@@ -149,6 +149,13 @@ MinProbeDepth
   tablebase files are on fast SSD drives or cached in RAM, a value of 0 or 1 can
   probably be used without much slowdown.
 
+MinProbeDepth6, MinProbeDepth7
+
+  Minimum remaining search depth required to probe 6-men and 7-men tablebases.
+  Values smaller than MinProbeDepth are ignored. Values larger than
+  MinProbeDepth can be useful if the larger tablebases are on slower disks than
+  the smaller tablebases.
+
 Clear Hash
 
   When activated, clears the hash table and the history heuristic table, so that

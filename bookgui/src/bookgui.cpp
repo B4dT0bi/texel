@@ -432,7 +432,7 @@ BookGui::updatePGNSelection() {
         int n = gn.nChildren();
         for (int i = 0; i < n; i++) {
             gn.goForward(i);
-            if (m.equals(gn.getMove())) {
+            if (m == gn.getMove()) {
                 found = true;
                 break;
             }
@@ -548,7 +548,7 @@ BookGui::setPosition(const Position& newPos, const std::vector<Move>& movesBefor
                      const std::vector<Move>& movesAfter) {
     moves = movesBefore;
     nextMoves = movesAfter;
-    if (!newPos.equals(pos)) {
+    if (!(newPos == pos)) {
         pos = newPos;
         if (analysing)
             bbControl.startAnalysis(moves);
@@ -866,7 +866,7 @@ BookGui::importPgn() {
         GameTree gt;
         while (reader.readPGN(gt)) {
             nGames++;
-            if (gt.getRootNode().getPos().equals(startPos)) {
+            if (gt.getRootNode().getPos() == startPos) {
                 gameTree.insertTree(gt, pgnImportMaxPly);
             } else {
                 std::cerr << "Skipping game " << nGames << ". Custom start position." << std::endl;

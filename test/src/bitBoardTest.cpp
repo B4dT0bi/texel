@@ -34,34 +34,34 @@
 
 void
 BitBoardTest::testKingAttacks() {
-    ASSERT_EQUAL(5, BitBoard::bitCount(BitBoard::kingAttacks[TextIO::getSquare("g1")]));
-    ASSERT_EQUAL(3, BitBoard::bitCount(BitBoard::kingAttacks[TextIO::getSquare("h1")]));
-    ASSERT_EQUAL(3, BitBoard::bitCount(BitBoard::kingAttacks[TextIO::getSquare("a1")]));
-    ASSERT_EQUAL(5, BitBoard::bitCount(BitBoard::kingAttacks[TextIO::getSquare("a2")]));
-    ASSERT_EQUAL(3, BitBoard::bitCount(BitBoard::kingAttacks[TextIO::getSquare("h8")]));
-    ASSERT_EQUAL(5, BitBoard::bitCount(BitBoard::kingAttacks[TextIO::getSquare("a6")]));
-    ASSERT_EQUAL(8, BitBoard::bitCount(BitBoard::kingAttacks[TextIO::getSquare("b2")]));
+    ASSERT_EQUAL(5, BitBoard::bitCount(BitBoard::kingAttacks(TextIO::getSquare("g1"))));
+    ASSERT_EQUAL(3, BitBoard::bitCount(BitBoard::kingAttacks(TextIO::getSquare("h1"))));
+    ASSERT_EQUAL(3, BitBoard::bitCount(BitBoard::kingAttacks(TextIO::getSquare("a1"))));
+    ASSERT_EQUAL(5, BitBoard::bitCount(BitBoard::kingAttacks(TextIO::getSquare("a2"))));
+    ASSERT_EQUAL(3, BitBoard::bitCount(BitBoard::kingAttacks(TextIO::getSquare("h8"))));
+    ASSERT_EQUAL(5, BitBoard::bitCount(BitBoard::kingAttacks(TextIO::getSquare("a6"))));
+    ASSERT_EQUAL(8, BitBoard::bitCount(BitBoard::kingAttacks(TextIO::getSquare("b2"))));
 }
 
 void
 BitBoardTest::testKnightAttacks() {
-    ASSERT_EQUAL(3, BitBoard::bitCount(BitBoard::knightAttacks[TextIO::getSquare("g1")]));
-    ASSERT_EQUAL(2, BitBoard::bitCount(BitBoard::knightAttacks[TextIO::getSquare("a1")]));
-    ASSERT_EQUAL(2, BitBoard::bitCount(BitBoard::knightAttacks[TextIO::getSquare("h1")]));
-    ASSERT_EQUAL(4, BitBoard::bitCount(BitBoard::knightAttacks[TextIO::getSquare("h6")]));
-    ASSERT_EQUAL(4, BitBoard::bitCount(BitBoard::knightAttacks[TextIO::getSquare("b7")]));
-    ASSERT_EQUAL(8, BitBoard::bitCount(BitBoard::knightAttacks[TextIO::getSquare("c6")]));
+    ASSERT_EQUAL(3, BitBoard::bitCount(BitBoard::knightAttacks(TextIO::getSquare("g1"))));
+    ASSERT_EQUAL(2, BitBoard::bitCount(BitBoard::knightAttacks(TextIO::getSquare("a1"))));
+    ASSERT_EQUAL(2, BitBoard::bitCount(BitBoard::knightAttacks(TextIO::getSquare("h1"))));
+    ASSERT_EQUAL(4, BitBoard::bitCount(BitBoard::knightAttacks(TextIO::getSquare("h6"))));
+    ASSERT_EQUAL(4, BitBoard::bitCount(BitBoard::knightAttacks(TextIO::getSquare("b7"))));
+    ASSERT_EQUAL(8, BitBoard::bitCount(BitBoard::knightAttacks(TextIO::getSquare("c6"))));
     ASSERT_EQUAL((1ULL<<TextIO::getSquare("e2")) |
                  (1ULL<<TextIO::getSquare("f3")) |
                  (1ULL<<TextIO::getSquare("h3")),
-                 BitBoard::knightAttacks[TextIO::getSquare("g1")]);
+                 BitBoard::knightAttacks(TextIO::getSquare("g1")));
 }
 
 void
 BitBoardTest::testPawnAttacks() {
     for (int sq = 0; sq < 64; sq++) {
-        int x = Position::getX(sq);
-        int y = Position::getY(sq);
+        int x = Square::getX(sq);
+        int y = Square::getY(sq);
         U64 atk = BitBoard::wPawnAttacksMask(1ULL << sq);
         U64 expected = 0;
         if (y < 7) {
@@ -101,25 +101,26 @@ BitBoardTest::testSquaresBetween() {
         for (int sq2 = 0; sq2 < 64; sq2++) {
             int d = BitBoard::getDirection(sq1, sq2);
             if (d == 0) {
-                ASSERT_EQUAL(0, BitBoard::squaresBetween[sq1][sq2]);
+                ASSERT_EQUAL(0, BitBoard::squaresBetween(sq1, sq2));
             } else {
-                int dx = Position::getX(sq1) - Position::getX(sq2);
-                int dy = Position::getY(sq1) - Position::getY(sq2);
+                int dx = Square::getX(sq1) - Square::getX(sq2);
+                int dy = Square::getY(sq1) - Square::getY(sq2);
                 if (std::abs(dx * dy) == 2) { // Knight direction
-                    ASSERT_EQUAL(0, BitBoard::squaresBetween[sq1][sq2]);
+                    ASSERT_EQUAL(0, BitBoard::squaresBetween(sq1, sq2));
                 } else {
                     if ((std::abs(dx) > 1) || (std::abs(dy) > 1)) {
-                        ASSERT(BitBoard::squaresBetween[sq1][sq2] != 0);
+                        ASSERT(BitBoard::squaresBetween(sq1, sq2) != 0);
                     } else {
-                        ASSERT_EQUAL(0, BitBoard::squaresBetween[sq1][sq2]);
+                        ASSERT_EQUAL(0, BitBoard::squaresBetween(sq1, sq2));
                     }
                 }
             }
         }
     }
 
-    ASSERT_EQUAL(0x0040201008040200ULL, BitBoard::squaresBetween[0][63]);
-    ASSERT_EQUAL(0x000000001C000000ULL, BitBoard::squaresBetween[TextIO::getSquare("b4")][TextIO::getSquare("f4")]);
+    ASSERT_EQUAL(0x0040201008040200ULL, BitBoard::squaresBetween(0, 63));
+    ASSERT_EQUAL(0x000000001C000000ULL, BitBoard::squaresBetween(TextIO::getSquare("b4"),
+                                                                 TextIO::getSquare("f4")));
 }
 
 /**
@@ -127,8 +128,8 @@ BitBoardTest::testSquaresBetween() {
  * corresponding direction, 8*dy+dx.
  */
 static int computeDirection(int from, int to) {
-    int dx = Position::getX(to) - Position::getX(from);
-    int dy = Position::getY(to) - Position::getY(from);
+    int dx = Square::getX(to) - Square::getX(from);
+    int dy = Square::getY(to) - Square::getY(from);
     if (dx == 0) {                   // Vertical rook direction
         if (dy == 0) return 0;
         return (dy > 0) ? 8 : -8;
@@ -150,8 +151,8 @@ BitBoardTest::testGetDirection() {
 }
 
 static int computeDistance(int from, int to, bool taxi) {
-    int dx = Position::getX(to) - Position::getX(from);
-    int dy = Position::getY(to) - Position::getY(from);
+    int dx = Square::getX(to) - Square::getX(from);
+    int dy = Square::getY(to) - Square::getY(from);
     if (taxi)
         return std::abs(dx) + std::abs(dy);
     else
@@ -190,9 +191,9 @@ static U64 mirrorXSlow(U64 mask) {
     U64 ret = 0;
     while (mask != 0) {
         int sq = BitBoard::extractSquare(mask);
-        int x = Position::getX(sq);
-        int y = Position::getY(sq);
-        int sq2 = Position::getSquare(7-x, y);
+        int x = Square::getX(sq);
+        int y = Square::getY(sq);
+        int sq2 = Square::getSquare(7-x, y);
         ret |= (1ULL << sq2);
     }
     return ret;
@@ -202,9 +203,9 @@ static U64 mirrorYSlow(U64 mask) {
     U64 ret = 0;
     while (mask != 0) {
         int sq = BitBoard::extractSquare(mask);
-        int x = Position::getX(sq);
-        int y = Position::getY(sq);
-        int sq2 = Position::getSquare(x, 7-y);
+        int x = Square::getX(sq);
+        int y = Square::getY(sq);
+        int sq2 = Square::getSquare(x, 7-y);
         ret |= (1ULL << sq2);
     }
     return ret;
@@ -265,7 +266,7 @@ BitBoardTest::testMaskAndMirror() {
 
     for (int sq = 0; sq < 64; sq++) {
         U64 m = 1ULL << sq;
-        switch (Position::getX(sq)) {
+        switch (Square::getX(sq)) {
         case 0:
             ASSERT((m & BitBoard::maskFileA) != 0);
             ASSERT((m & BitBoard::maskFileB) == 0);

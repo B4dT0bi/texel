@@ -32,13 +32,6 @@
 
 #include <cassert>
 
-//#define MOVELIST_DEBUG
-
-#ifdef MOVELIST_DEBUG
-# include <set>
-# include "textio.hpp"
-#endif
-
 /** A stack-allocated move list object. */
 class MoveList {
 public:
@@ -222,15 +215,15 @@ template <bool wtm>
 inline bool
 MoveGen::sqAttacked(const Position& pos, int sq, U64 occupied) {
     using OtherColor = ColorTraits<!wtm>;
-    if ((BitBoard::knightAttacks[sq] & pos.pieceTypeBB(OtherColor::KNIGHT)) != 0)
+    if ((BitBoard::knightAttacks(sq) & pos.pieceTypeBB(OtherColor::KNIGHT)) != 0)
         return true;
-    if ((BitBoard::kingAttacks[sq] & pos.pieceTypeBB(OtherColor::KING)) != 0)
+    if ((BitBoard::kingAttacks(sq) & pos.pieceTypeBB(OtherColor::KING)) != 0)
         return true;
     if (wtm) {
-        if ((BitBoard::wPawnAttacks[sq] & pos.pieceTypeBB(OtherColor::PAWN)) != 0)
+        if ((BitBoard::wPawnAttacks(sq) & pos.pieceTypeBB(OtherColor::PAWN)) != 0)
             return true;
     } else {
-        if ((BitBoard::bPawnAttacks[sq] & pos.pieceTypeBB(OtherColor::PAWN)) != 0)
+        if ((BitBoard::bPawnAttacks(sq) & pos.pieceTypeBB(OtherColor::PAWN)) != 0)
             return true;
     }
     U64 bbQueen = pos.pieceTypeBB(OtherColor::QUEEN);
@@ -266,15 +259,15 @@ MoveGen::nextPieceSafe(const Position& pos, int sq, int delta) {
     case -8: dx=0; dy=-1; break;
     case -7: dx=1; dy=-1; break;
     }
-    int x = Position::getX(sq);
-    int y = Position::getY(sq);
+    int x = Square::getX(sq);
+    int y = Square::getY(sq);
     while (true) {
         x += dx;
         y += dy;
         if ((x < 0) || (x > 7) || (y < 0) || (y > 7)) {
             return Piece::EMPTY;
         }
-        int p = pos.getPiece(Position::getSquare(x, y));
+        int p = pos.getPiece(Square::getSquare(x, y));
         if (p != Piece::EMPTY)
             return p;
     }

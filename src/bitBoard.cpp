@@ -28,12 +28,12 @@
 #include <cassert>
 #include <iostream>
 
-U64 BitBoard::kingAttacks[64];
-U64 BitBoard::knightAttacks[64];
-U64 BitBoard::wPawnAttacks[64];
-U64 BitBoard::bPawnAttacks[64];
-U64 BitBoard::wPawnBlockerMask[64];
-U64 BitBoard::bPawnBlockerMask[64];
+U64 BitBoard::kingAttacksTable[64];
+U64 BitBoard::knightAttacksTable[64];
+U64 BitBoard::wPawnAttacksTable[64];
+U64 BitBoard::bPawnAttacksTable[64];
+U64 BitBoard::wPawnBlockerMaskTable[64];
+U64 BitBoard::bPawnBlockerMaskTable[64];
 
 const U64 BitBoard::maskFile[8] = {
     0x0101010101010101ULL,
@@ -140,42 +140,6 @@ const S8 BitBoard::dirTable[] = {
     0,  7,  0,  0,  0,  0,  0,  0,  8,  0,  0,  0,  0,  0,  0,  9
 };
 
-const S8 BitBoard::kingDistTable[] = {
-       7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-    0, 7, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7,
-    0, 7, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 7,
-    0, 7, 6, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 6, 7,
-    0, 7, 6, 5, 4, 3, 3, 3, 3, 3, 3, 3, 4, 5, 6, 7,
-    0, 7, 6, 5, 4, 3, 2, 2, 2, 2, 2, 3, 4, 5, 6, 7,
-    0, 7, 6, 5, 4, 3, 2, 1, 1, 1, 2, 3, 4, 5, 6, 7,
-    0, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7,
-    0, 7, 6, 5, 4, 3, 2, 1, 1, 1, 2, 3, 4, 5, 6, 7,
-    0, 7, 6, 5, 4, 3, 2, 2, 2, 2, 2, 3, 4, 5, 6, 7,
-    0, 7, 6, 5, 4, 3, 3, 3, 3, 3, 3, 3, 4, 5, 6, 7,
-    0, 7, 6, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 6, 7,
-    0, 7, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 7,
-    0, 7, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7,
-    0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7
-};
-
-const S8 BitBoard::taxiDistTable[] = {
-      14,13,12,11,10, 9, 8, 7, 8, 9,10,11,12,13,14,
-    0,13,12,11,10, 9, 8, 7, 6, 7, 8, 9,10,11,12,13,
-    0,12,11,10, 9, 8, 7, 6, 5, 6, 7, 8, 9,10,11,12,
-    0,11,10, 9, 8, 7, 6, 5, 4, 5, 6, 7, 8, 9,10,11,
-    0,10, 9, 8, 7, 6, 5, 4, 3, 4, 5, 6, 7, 8, 9,10,
-    0, 9, 8, 7, 6, 5, 4, 3, 2, 3, 4, 5, 6, 7, 8, 9,
-    0, 8, 7, 6, 5, 4, 3, 2, 1, 2, 3, 4, 5, 6, 7, 8,
-    0, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7,
-    0, 8, 7, 6, 5, 4, 3, 2, 1, 2, 3, 4, 5, 6, 7, 8,
-    0, 9, 8, 7, 6, 5, 4, 3, 2, 3, 4, 5, 6, 7, 8, 9,
-    0,10, 9, 8, 7, 6, 5, 4, 3, 4, 5, 6, 7, 8, 9,10,
-    0,11,10, 9, 8, 7, 6, 5, 4, 5, 6, 7, 8, 9,10,11,
-    0,12,11,10, 9, 8, 7, 6, 5, 6, 7, 8, 9,10,11,12,
-    0,13,12,11,10, 9, 8, 7, 6, 7, 8, 9,10,11,12,13,
-    0,14,13,12,11,10, 9, 8, 7, 8, 9,10,11,12,13,14
-};
-
 const int BitBoard::trailingZ[64] = {
     63,  0, 58,  1, 59, 47, 53,  2,
     60, 39, 48, 27, 54, 33, 42,  3,
@@ -187,7 +151,7 @@ const int BitBoard::trailingZ[64] = {
     44, 24, 15,  8, 23,  7,  6,  5
 };
 
-U64 BitBoard::squaresBetween[64][64];
+U64 BitBoard::squaresBetweenTable[64][64];
 
 static U64 createPattern(int i, U64 mask) {
     U64 ret = 0ULL;
@@ -214,7 +178,7 @@ static U64 addRay(U64 mask, int x, int y, int dx, int dy,
         if (dy != 0) {
             y += dy; if ((y < lo) || (y > hi)) break;
         }
-        int sq = Position::getSquare(x, y);
+        int sq = Square::getSquare(x, y);
         mask |= 1ULL << sq;
         if ((occupied & (1ULL << sq)) != 0)
             break;
@@ -247,13 +211,13 @@ BitBoard::staticInitialize() {
 
     for (int f = 0; f < 8; f++) {
         U64 m = 0;
-        if (f > 0) m |= 1ULL << Position::getSquare(f-1, 3);
-        if (f < 7) m |= 1ULL << Position::getSquare(f+1, 3);
+        if (f > 0) m |= 1ULL << Square::getSquare(f-1, 3);
+        if (f < 7) m |= 1ULL << Square::getSquare(f+1, 3);
         epMaskW[f] = m;
 
         m = 0;
-        if (f > 0) m |= 1ULL << Position::getSquare(f-1, 4);
-        if (f < 7) m |= 1ULL << Position::getSquare(f+1, 4);
+        if (f > 0) m |= 1ULL << Square::getSquare(f-1, 4);
+        if (f < 7) m |= 1ULL << Square::getSquare(f+1, 4);
         epMaskB[f] = m;
     }
 
@@ -263,7 +227,7 @@ BitBoard::staticInitialize() {
         U64 mask = (((m >> 1) | (m << 7) | (m >> 9)) & maskAToGFiles) |
                    (((m << 1) | (m << 9) | (m >> 7)) & maskBToHFiles) |
                     (m << 8) | (m >> 8);
-        kingAttacks[sq] = mask;
+        kingAttacksTable[sq] = mask;
     }
 
     // Compute knight attacks
@@ -273,40 +237,40 @@ BitBoard::staticInitialize() {
                    (((m << 15) | (m >> 17)) & maskAToGFiles) |
                    (((m << 17) | (m >> 15)) & maskBToHFiles) |
                    (((m << 10) | (m >>  6)) & maskCToHFiles);
-        knightAttacks[sq] = mask;
+        knightAttacksTable[sq] = mask;
     }
 
     // Compute pawn attacks
     for (int sq = 0; sq < 64; sq++) {
         U64 m = 1ULL << sq;
         U64 mask = ((m << 7) & maskAToGFiles) | ((m << 9) & maskBToHFiles);
-        wPawnAttacks[sq] = mask;
+        wPawnAttacksTable[sq] = mask;
         mask = ((m >> 9) & maskAToGFiles) | ((m >> 7) & maskBToHFiles);
-        bPawnAttacks[sq] = mask;
+        bPawnAttacksTable[sq] = mask;
 
-        int x = Position::getX(sq);
-        int y = Position::getY(sq);
+        int x = Square::getX(sq);
+        int y = Square::getY(sq);
         m = 0;
         for (int y2 = y+1; y2 < 8; y2++) {
-            if (x > 0) m |= 1ULL << Position::getSquare(x-1, y2);
-                       m |= 1ULL << Position::getSquare(x  , y2);
-            if (x < 7) m |= 1ULL << Position::getSquare(x+1, y2);
+            if (x > 0) m |= 1ULL << Square::getSquare(x-1, y2);
+                       m |= 1ULL << Square::getSquare(x  , y2);
+            if (x < 7) m |= 1ULL << Square::getSquare(x+1, y2);
         }
-        wPawnBlockerMask[sq] = m;
+        wPawnBlockerMaskTable[sq] = m;
         m = 0;
         for (int y2 = y-1; y2 >= 0; y2--) {
-            if (x > 0) m |= 1ULL << Position::getSquare(x-1, y2);
-                       m |= 1ULL << Position::getSquare(x  , y2);
-            if (x < 7) m |= 1ULL << Position::getSquare(x+1, y2);
+            if (x > 0) m |= 1ULL << Square::getSquare(x-1, y2);
+                       m |= 1ULL << Square::getSquare(x  , y2);
+            if (x < 7) m |= 1ULL << Square::getSquare(x+1, y2);
         }
-        bPawnBlockerMask[sq] = m;
+        bPawnBlockerMaskTable[sq] = m;
     }
 
 #ifdef HAS_BMI2
     int tdSize = 0;
     for (int sq = 0; sq < 64; sq++) {
-        int x = Position::getX(sq);
-        int y = Position::getY(sq);
+        int x = Square::getX(sq);
+        int y = Square::getY(sq);
         rMasks[sq] = addRookRays(x, y, 0ULL, true);
         bMasks[sq] = addBishopRays(x, y, 0ULL, true);
         tdSize += 1 << bitCount(rMasks[sq]);
@@ -317,8 +281,8 @@ BitBoard::staticInitialize() {
     // Rook magics
     int tableUsed = 0;
     for (int sq = 0; sq < 64; sq++) {
-        int x = Position::getX(sq);
-        int y = Position::getY(sq);
+        int x = Square::getX(sq);
+        int y = Square::getY(sq);
         int tableSize = 1 << bitCount(rMasks[sq]);
         U64* table = &tableData[tableUsed];
         tableUsed += tableSize;
@@ -331,8 +295,8 @@ BitBoard::staticInitialize() {
 
     // Bishop magics
     for (int sq = 0; sq < 64; sq++) {
-        int x = Position::getX(sq);
-        int y = Position::getY(sq);
+        int x = Square::getX(sq);
+        int y = Square::getY(sq);
         int tableSize = 1 << bitCount(bMasks[sq]);
         U64* table = &tableData[tableUsed];
         tableUsed += tableSize;
@@ -354,8 +318,8 @@ BitBoard::staticInitialize() {
     // Rook magics
     int tableUsed = 0;
     for (int sq = 0; sq < 64; sq++) {
-        int x = Position::getX(sq);
-        int y = Position::getY(sq);
+        int x = Square::getX(sq);
+        int y = Square::getY(sq);
         rMasks[sq] = addRookRays(x, y, 0ULL, true);
         int tableSize = 1 << (64 - rBits[sq]);
         U64* table = &tableData[tableUsed];
@@ -378,8 +342,8 @@ BitBoard::staticInitialize() {
 
     // Bishop magics
     for (int sq = 0; sq < 64; sq++) {
-        int x = Position::getX(sq);
-        int y = Position::getY(sq);
+        int x = Square::getX(sq);
+        int y = Square::getY(sq);
         bMasks[sq] = addBishopRays(x, y, 0ULL, true);
         int tableSize = 1 << (64 - bBits[sq]);
         U64* table = &tableData[tableUsed];
@@ -404,20 +368,20 @@ BitBoard::staticInitialize() {
     // squaresBetween
     for (int sq1 = 0; sq1 < 64; sq1++) {
         for (int j = 0; j < 64; j++)
-            squaresBetween[sq1][j] = 0;
+            squaresBetweenTable[sq1][j] = 0;
         for (int dx = -1; dx <= 1; dx++) {
             for (int dy = -1; dy <= 1; dy++) {
                 if ((dx == 0) && (dy == 0))
                     continue;
                 U64 m = 0;
-                int x = Position::getX(sq1);
-                int y = Position::getY(sq1);
+                int x = Square::getX(sq1);
+                int y = Square::getY(sq1);
                 while (true) {
                     x += dx; y += dy;
                     if ((x < 0) || (x > 7) || (y < 0) || (y > 7))
                         break;
-                    int sq2 = Position::getSquare(x, y);
-                    squaresBetween[sq1][sq2] = m;
+                    int sq2 = Square::getSquare(x, y);
+                    squaresBetweenTable[sq1][sq2] = m;
                     m |= 1ULL << sq2;
                 }
             }

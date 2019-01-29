@@ -37,6 +37,9 @@
 #include "chesstool.hpp"
 #include "tbgen.hpp"
 
+#include <fstream>
+#include <iomanip>
+
 bool
 PosGenerator::generate(const std::string& type) {
     if (type == "qvsn")
@@ -66,25 +69,25 @@ PosGenerator::genQvsN() {
                             continue;
                         Position pos;
                         for (int i = 0; i < 8; i++) {
-                            pos.setPiece(Position::getSquare(i, 1), Piece::WPAWN);
-                            pos.setPiece(Position::getSquare(i, 6), Piece::BPAWN);
-                            pos.setPiece(Position::getSquare(i, 7), Piece::BKNIGHT);
+                            pos.setPiece(Square::getSquare(i, 1), Piece::WPAWN);
+                            pos.setPiece(Square::getSquare(i, 6), Piece::BPAWN);
+                            pos.setPiece(Square::getSquare(i, 7), Piece::BKNIGHT);
                         }
-                        pos.setPiece(Position::getSquare(bk, 7), Piece::BKING);
-                        pos.setPiece(Position::getSquare(wk, 0), Piece::WKING);
-                        pos.setPiece(Position::getSquare(q1, 0), Piece::WQUEEN);
-                        pos.setPiece(Position::getSquare(q2, 0), Piece::WQUEEN);
-                        pos.setPiece(Position::getSquare(q3, 0), Piece::WQUEEN);
+                        pos.setPiece(Square::getSquare(bk, 7), Piece::BKING);
+                        pos.setPiece(Square::getSquare(wk, 0), Piece::WKING);
+                        pos.setPiece(Square::getSquare(q1, 0), Piece::WQUEEN);
+                        pos.setPiece(Square::getSquare(q2, 0), Piece::WQUEEN);
+                        pos.setPiece(Square::getSquare(q3, 0), Piece::WQUEEN);
                         writeFEN(pos);
                         for (int i = 0; i < 8; i++) {
-                            pos.setPiece(Position::getSquare(i, 6), Piece::EMPTY);
+                            pos.setPiece(Square::getSquare(i, 6), Piece::EMPTY);
                             writeFEN(pos);
-                            pos.setPiece(Position::getSquare(i, 6), Piece::BPAWN);
+                            pos.setPiece(Square::getSquare(i, 6), Piece::BPAWN);
                         }
                         for (int i = 0; i < 8; i++) {
-                            pos.setPiece(Position::getSquare(i, 1), Piece::EMPTY);
+                            pos.setPiece(Square::getSquare(i, 1), Piece::EMPTY);
                             writeFEN(pos);
-                            pos.setPiece(Position::getSquare(i, 1), Piece::WPAWN);
+                            pos.setPiece(Square::getSquare(i, 1), Piece::WPAWN);
                         }
                     }
                 }
@@ -263,9 +266,19 @@ iteratePositions(const std::string& tbType, bool skipSymmetric, Func func) {
     const bool anyPawns = whitePawns || blackPawns;
     const bool epPossible = whitePawns && blackPawns;
 
+    bool symTable = true; // True if white and black have the same pieces
+    {
+        int nPieces[Piece::nPieceTypes] = { 0 };
+        for (int p : pieces)
+            nPieces[p]++;
+        for (int pt = Piece::WQUEEN; pt <= Piece::WPAWN; pt++)
+            if (nPieces[pt] != nPieces[Piece::makeBlack(pt)])
+                symTable = false;
+    }
+
     for (int wk = 0; wk < 64; wk++) {
-        int x = Position::getX(wk);
-        int y = Position::getY(wk);
+        int x = Square::getX(wk);
+        int y = Square::getY(wk);
         if (skipSymmetric) {
             if (x >= 4)
                 continue;
@@ -274,8 +287,8 @@ iteratePositions(const std::string& tbType, bool skipSymmetric, Func func) {
                     continue;
         }
         for (int bk = 0; bk < 64; bk++) {
-            int x2 = Position::getX(bk);
-            int y2 = Position::getY(bk);
+            int x2 = Square::getX(bk);
+            int y2 = Square::getY(bk);
             if (std::abs(x2-x) < 2 && std::abs(y2-y) < 2)
                 continue;
 
@@ -323,6 +336,8 @@ iteratePositions(const std::string& tbType, bool skipSymmetric, Func func) {
                             if (wKingAttacked)
                                 continue;
                         }
+                        if (skipSymmetric && symTable && !white)
+                            continue;
                         pos.setWhiteMove(white);
 
                         U64 epSquares = epPossible ? getEPSquares(pos) : 0;
@@ -638,6 +653,32 @@ PosGenerator::wdlTest(const std::vector<std::string>& tbTypes) {
         double t1 = currentTime();
         std::cout << tbType << " nPos:" << nPos << " nDiff:" << nDiff << " nDiff50:" << nDiff50
                   << " t:" << (t1-t0) << std::endl;
+    }
+}
+
+void
+PosGenerator::wdlDump(const std::vector<std::string>& tbTypes) {
+    ChessTool::setupTB();
+    std::ofstream ofs("out.bin", std::ios::binary);
+    for (std::string tbType : tbTypes) {
+        double t0 = currentTime();
+        U64 nPos = 0;
+        U64 cnt[5] = {0, 0, 0, 0, 0};
+        iteratePositions(tbType, [&](Position& pos) {
+            nPos++;
+            int success;
+            int wdl = Syzygy::probe_wdl(pos, &success);
+            if (!success)
+                throw ChessParseError("RTB probe failed, pos:" + TextIO::toFEN(pos));
+            if (!pos.isWhiteMove())
+                wdl = -wdl;
+            cnt[wdl+2]++;
+            S8 c = wdl;
+            ofs.write((const char*)&c, 1);
+        });
+        double t1 = currentTime();
+        std::cout << tbType << " nPos:" << nPos << " t:" << (t1-t0) << std::endl;
+        std::cout << cnt[0] << ' ' << cnt[1] << ' ' << cnt[2] << ' ' << cnt[3] << ' ' << cnt[4] << std::endl;
     }
 }
 

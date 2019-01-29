@@ -138,7 +138,8 @@ ChessTool::setupTB() {
     UciParams::rtbPath->set("/home/petero/chess/rtb/wdl:"
                             "/home/petero/chess/rtb/dtz:"
                             "/home/petero/chess/rtb/6wdl:"
-                            "/home/petero/chess/rtb/6dtz");
+                            "/home/petero/chess/rtb/6dtz:"
+                            "/home/petero/chess/rtb/7men");
 }
 
 std::vector<std::string>
@@ -301,23 +302,16 @@ ChessTool::filterScore(std::istream& is, int scLimit, double prLimit) {
     std::cout << std::flush;
 }
 
-static int
-swapSquareY(int square) {
-    int x = Position::getX(square);
-    int y = Position::getY(square);
-    return Position::getSquare(x, 7-y);
-}
-
 static Position
 swapColors(const Position& pos) {
     Position sym;
     sym.setWhiteMove(!pos.isWhiteMove());
     for (int x = 0; x < 8; x++) {
         for (int y = 0; y < 8; y++) {
-            int sq = Position::getSquare(x, y);
+            int sq = Square::getSquare(x, y);
             int p = pos.getPiece(sq);
             p = Piece::isWhite(p) ? Piece::makeBlack(p) : Piece::makeWhite(p);
-            sym.setPiece(swapSquareY(sq), p);
+            sym.setPiece(Square::mirrorY(sq), p);
         }
     }
 
@@ -329,7 +323,7 @@ swapColors(const Position& pos) {
     sym.setCastleMask(castleMask);
 
     if (pos.getEpSquare() >= 0)
-        sym.setEpSquare(swapSquareY(pos.getEpSquare()));
+        sym.setEpSquare(Square::mirrorY(pos.getEpSquare()));
 
     sym.setHalfMoveClock(pos.getHalfMoveClock());
     sym.setFullMoveCounter(pos.getFullMoveCounter());
@@ -1799,10 +1793,10 @@ ChessTool::staticScoreMoveListQuiet(Position& pos, Evaluate& eval, MoveList& mov
         int prevHang = 0;
         if (pVal > ::pV) {
             if (wtm) {
-                if (BitBoard::wPawnAttacks[m.from()] & pos.pieceTypeBB(Piece::BPAWN))
+                if (BitBoard::wPawnAttacks(m.from()) & pos.pieceTypeBB(Piece::BPAWN))
                     prevHang = pVal;
             } else {
-                if (BitBoard::bPawnAttacks[m.from()] & pos.pieceTypeBB(Piece::WPAWN))
+                if (BitBoard::bPawnAttacks(m.from()) & pos.pieceTypeBB(Piece::WPAWN))
                     prevHang = pVal;
             }
         }
@@ -1819,10 +1813,10 @@ ChessTool::staticScoreMoveListQuiet(Position& pos, Evaluate& eval, MoveList& mov
         int currHang = 0;
         if (pVal > ::pV) {
             if (wtm) {
-                if (BitBoard::wPawnAttacks[m.to()] & pos.pieceTypeBB(Piece::BPAWN))
+                if (BitBoard::wPawnAttacks(m.to()) & pos.pieceTypeBB(Piece::BPAWN))
                     currHang = pVal;
             } else {
-                if (BitBoard::bPawnAttacks[m.to()] & pos.pieceTypeBB(Piece::WPAWN))
+                if (BitBoard::bPawnAttacks(m.to()) & pos.pieceTypeBB(Piece::WPAWN))
                     currHang = pVal;
             }
         }

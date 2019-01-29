@@ -32,6 +32,7 @@
 #include <vector>
 #include <queue>
 #include <functional>
+#include <exception>
 
 
 /** A pool of threads to which tasks can be queued and results gotten back. */
@@ -44,11 +45,13 @@ public:
     ~ThreadPool();
 
     /** Add a task to be executed. The function "func" must have signature:
-     *  Result func(int workerNo), where workerNo is between 0 and nThreads-1. */
+     *  Result func(int workerNo), where workerNo is between 0 and nThreads-1.
+     *  Task execution starts in the same order as the tasks were added. */
     template <typename Func>
     void addTask(Func func);
 
-    /** Wait for and retrieve a result. Return false if there is no task to wait for. */
+    /** Wait for and retrieve a result. Return false if there is no task to wait for.
+     *  The results are not necessarily returned in the same order as the tasks were added. */
     bool getResult(Result& result);
 
 private:
@@ -63,6 +66,7 @@ private:
     std::vector<std::thread> threads;
     std::deque<std::function<Result(int)>> tasks;
     std::deque<Result> results;
+    std::deque<std::exception_ptr> exceptions;
 };
 
 template <typename Result>
@@ -95,12 +99,17 @@ void ThreadPool<Result>::addTask(Func func) {
 template <typename Result>
 bool ThreadPool<Result>::getResult(Result& result) {
     std::unique_lock<std::mutex> L(mutex);
-    while (results.empty()) {
+    while (results.empty() && exceptions.empty()) {
         if (nActive == 0 && tasks.empty())
             return false;
         completeCv.wait(L);
     }
-    result = results.front();
+    if (!exceptions.empty()) {
+        std::exception_ptr ex = exceptions.front();
+        exceptions.pop_front();
+        std::rethrow_exception(ex);
+    }
+    result = std::move(results.front());
     results.pop_front();
     return true;
 }
@@ -119,12 +128,19 @@ void ThreadPool<Result>::workerLoop(int workerNo) {
             tasks.pop_front();
             nActive++;
         }
-        Result result = task(workerNo);
-        {
+        try {
+            Result result = task(workerNo);
             std::unique_lock<std::mutex> L(mutex);
             nActive--;
-            bool empty = results.empty();
+            bool empty = results.empty() && exceptions.empty();
             results.push_back(result);
+            if (empty)
+                completeCv.notify_all();
+        } catch (...) {
+            std::unique_lock<std::mutex> L(mutex);
+            nActive--;
+            bool empty = results.empty() && exceptions.empty();
+            exceptions.push_back(std::current_exception());
             if (empty)
                 completeCv.notify_all();
         }

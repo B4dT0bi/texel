@@ -509,7 +509,6 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
     // Check transposition table
     int evalScore = UNKNOWN_SCORE;
     TranspositionTable::TTEntry ent;
-    ent.clear();
     const bool singularSearch = !sti.singularMove.isEmpty();
     const bool useTT = !singularSearch;
     if (useTT) tt.probe(hKey, ent);
@@ -548,8 +547,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
     int tbScore = illegalScore;
     if (tb && depth >= minProbeDepth && !singularSearch) {
         TranspositionTable::TTEntry tbEnt;
-        tbEnt.clear();
-        if (TBProbe::tbProbe(pos, ply, alpha, beta, tt.getTT(), tbEnt)) {
+        if (TBProbe::tbProbe(pos, ply, alpha, beta, depth, tt.getTT(), tbEnt)) {
             tbHits++;
             nodesToGo -= 100;
             int type = tbEnt.getType();
@@ -602,7 +600,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
     // If out of depth, perform quiescence search
     if (depth <= 0) {
         q0Eval = evalScore;
-        sti.bestMove.setMove(0,0,0,0);
+        sti.bestMove.setMove(A1,A1,0,0);
         int score = quiesce(alpha, beta, ply, 0, inCheck);
         int type = TType::T_EXACT;
         if (score <= alpha) {
@@ -688,7 +686,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
                 const int epSquare = pos.getEpSquare();
                 pos.setEpSquare(-1);
                 searchTreeInfo[ply+1].allowNullMove = false;
-                searchTreeInfo[ply+1].bestMove.setMove(0,0,0,0);
+                searchTreeInfo[ply+1].bestMove.setMove(A1,A1,0,0);
                 const int hmc = pos.getHalfMoveClock();
                 pos.setHalfMoveClock(0);
                 score = -negaScout(tb, -beta, -(beta - 1), ply + 1, depth - R, -1, false);
@@ -704,7 +702,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
                 const Move savedMove = sti2.currentMove;
                 const int savedMoveNo = sti2.currentMoveNo;
                 const S64 savedNodeIdx2 = sti2.nodeIdx;
-                sti2.currentMove = Move(1,1,0); // Represents "no move"
+                sti2.currentMove.setMove(B1,B1,0,0); // Represents "no move"
                 sti2.currentMoveNo = -1;
                 sti2.nodeIdx = sti.nodeIdx;
                 const S64 savedNodeIdx = sti.nodeIdx;
@@ -715,7 +713,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
                 sti2.currentMove = savedMove;
                 sti2.currentMoveNo = savedMoveNo;
                 sti2.nodeIdx = savedNodeIdx2;
-                sti3.bestMove.setMove(0,0,0,0);
+                sti3.bestMove.setMove(A1,A1,0,0);
             }
             if (score >= beta) {
                 if (isWinScore(score))
@@ -751,7 +749,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
             const Move savedMove = sti2.currentMove;
             const int savedMoveNo = sti2.currentMoveNo;
             const S64 savedNodeIdx2 = sti2.nodeIdx;
-            sti2.currentMove = Move(1,1,0); // Represents "no move"
+            sti2.currentMove.setMove(B1,B1,0,0); // Represents "no move"
             sti2.currentMoveNo = -1;
             sti2.nodeIdx = sti.nodeIdx;
             const S64 savedNodeIdx = sti.nodeIdx;
@@ -795,7 +793,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
         const Move savedMove = sti2.currentMove;
         const int savedMoveNo = sti2.currentMoveNo;
         const S64 savedNodeIdx2 = sti2.nodeIdx;
-        sti2.currentMove = Move(1,1,0); // Represents "no move"
+        sti2.currentMove.setMove(B1,B1,0,0); // Represents "no move"
         sti2.currentMoveNo = -1;
         sti2.nodeIdx = sti.nodeIdx;
         const S64 savedNodeIdx = sti.nodeIdx;
@@ -804,7 +802,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
         int newBeta = ent.getScore(ply) - 25;
         int singScore = negaScout(tb, newBeta-1, newBeta, ply, newDepth,
                                   recaptureSquare, inCheck);
-        sti.singularMove.setMove(0,0,0,0);
+        sti.singularMove.setMove(A1,A1,0,0);
         sti.nodeIdx = savedNodeIdx;
         sti2.currentMove = savedMove;
         sti2.currentMoveNo = savedMoveNo;
@@ -850,7 +848,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
     if (tb && tbScore != illegalScore) {
         bestScore = tbScore - 1;
         bestMove = -2;
-        sti.bestMove.setMove(0, 0, 0, 0);
+        sti.bestMove.setMove(A1,A1,0,0);
     }
     bool allDone = false;
     for (int pass = 0; pass < 2 && !allDone; pass++) {
@@ -890,7 +888,7 @@ Search::negaScout(int alpha, int beta, int ply, int depth, int recaptureSquare,
                 eval.prefetch(nextHash);
 #endif
                 if (pass == 0) {
-                    if ((mi == 0) && m.equals(sti.singularMove))
+                    if ((mi == 0) && m == sti.singularMove)
                         continue;
                     if (!MoveGen::isLegal(pos, m, inCheck))
                         continue;
@@ -1272,11 +1270,11 @@ Search::SEE(Position& pos, const Move& m, int alpha, int beta) {
         int bestValue = std::numeric_limits<int>::max();
         U64 atk;
         if (white) {
-            atk = BitBoard::bPawnAttacks[square] & pos.pieceTypeBB(Piece::WPAWN) & occupied;
+            atk = BitBoard::bPawnAttacks(square) & pos.pieceTypeBB(Piece::WPAWN) & occupied;
             if (atk != 0) {
                 bestValue = ::pV;
             } else {
-                atk = BitBoard::knightAttacks[square] & pos.pieceTypeBB(Piece::WKNIGHT) & occupied;
+                atk = BitBoard::knightAttacks(square) & pos.pieceTypeBB(Piece::WKNIGHT) & occupied;
                 if (atk != 0) {
                     bestValue = ::nV;
                 } else {
@@ -1294,7 +1292,7 @@ Search::SEE(Position& pos, const Move& m, int alpha, int beta) {
                             if (atk != 0) {
                                 bestValue = ::qV;
                             } else {
-                                atk = BitBoard::kingAttacks[square] & pos.pieceTypeBB(Piece::WKING) & occupied;
+                                atk = BitBoard::kingAttacks(square) & pos.pieceTypeBB(Piece::WKING) & occupied;
                                 if (atk != 0) {
                                     bestValue = kV;
                                 } else {
@@ -1306,11 +1304,11 @@ Search::SEE(Position& pos, const Move& m, int alpha, int beta) {
                 }
             }
         } else {
-            atk = BitBoard::wPawnAttacks[square] & pos.pieceTypeBB(Piece::BPAWN) & occupied;
+            atk = BitBoard::wPawnAttacks(square) & pos.pieceTypeBB(Piece::BPAWN) & occupied;
             if (atk != 0) {
                 bestValue = ::pV;
             } else {
-                atk = BitBoard::knightAttacks[square] & pos.pieceTypeBB(Piece::BKNIGHT) & occupied;
+                atk = BitBoard::knightAttacks(square) & pos.pieceTypeBB(Piece::BKNIGHT) & occupied;
                 if (atk != 0) {
                     bestValue = ::nV;
                 } else {
@@ -1328,7 +1326,7 @@ Search::SEE(Position& pos, const Move& m, int alpha, int beta) {
                             if (atk != 0) {
                                 bestValue = ::qV;
                             } else {
-                                atk = BitBoard::kingAttacks[square] & pos.pieceTypeBB(Piece::BKING) & occupied;
+                                atk = BitBoard::kingAttacks(square) & pos.pieceTypeBB(Piece::BKING) & occupied;
                                 if (atk != 0) {
                                     bestValue = kV;
                                 } else {
@@ -1392,7 +1390,7 @@ bool
 Search::selectHashMove(MoveList& moves, const Move& hashMove) {
     for (int i = 0; i < moves.size; i++) {
         Move& m = moves[i];
-        if (m.equals(hashMove)) {
+        if (m == hashMove) {
             m.setScore(10000);
             std::swap(moves[i], moves[0]);
             return true;
@@ -1411,7 +1409,7 @@ Search::initSearchTreeInfo() {
     bool useNullMove = UciParams::useNullMove->getBoolPar();
     for (size_t i = 0; i < COUNT_OF(searchTreeInfo); i++) {
         searchTreeInfo[i].allowNullMove = useNullMove;
-        searchTreeInfo[i].singularMove.setMove(0,0,0,0);
+        searchTreeInfo[i].singularMove.setMove(A1,A1,0,0);
         searchTreeInfo[i].abdadaExclusive = false;
     }
 }

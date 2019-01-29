@@ -28,6 +28,7 @@
 
 #include "util/util.hpp"
 #include "util/alignedAlloc.hpp"
+#include "square.hpp"
 
 
 #ifdef HAS_BMI2
@@ -37,27 +38,8 @@ inline U64 pext(U64 value, U64 mask) {
 }
 #endif
 
-enum Square {
-    A1, B1, C1, D1, E1, F1, G1, H1,
-    A2, B2, C2, D2, E2, F2, G2, H2,
-    A3, B3, C3, D3, E3, F3, G3, H3,
-    A4, B4, C4, D4, E4, F4, G4, H4,
-    A5, B5, C5, D5, E5, F5, G5, H5,
-    A6, B6, C6, D6, E6, F6, G6, H6,
-    A7, B7, C7, D7, E7, F7, G7, H7,
-    A8, B8, C8, D8, E8, F8, G8, H8
-};
-
 class BitBoard {
 public:
-    /** Squares attacked by a king on a given square. */
-    static U64 kingAttacks[64];
-    static U64 knightAttacks[64];
-    static U64 wPawnAttacks[64], bPawnAttacks[64];
-
-    // Squares preventing a pawn from being a passed pawn, if occupied by enemy pawn
-    static U64 wPawnBlockerMask[64], bPawnBlockerMask[64];
-
     static const U64 maskFileA = 0x0101010101010101ULL;
     static const U64 maskFileB = 0x0202020202020202ULL;
     static const U64 maskFileC = 0x0404040404040404ULL;
@@ -96,7 +78,7 @@ public:
     static const U64 maskCorners   = 0x8100000000000081ULL;
 
     /** Convert one or more squares to a bitmask. */
-    static U64 sqMask(Square sq) { return 1ULL << sq; }
+    static U64 sqMask(SquareName sq) { return 1ULL << sq; }
     template <typename Sq0, typename... Squares> static U64 sqMask(Sq0 sq0, Squares... squares) {
         return sqMask(sq0) | sqMask(squares...);
     }
@@ -114,7 +96,13 @@ public:
     /** Shift mask in the SW and SE directions. */
     static U64 bPawnAttacksMask(U64 mask);
 
-    static U64 squaresBetween[64][64];
+    static U64 kingAttacks(int sq) { return kingAttacksTable[sq]; }
+    static U64 knightAttacks(int sq) { return knightAttacksTable[sq]; }
+    static U64 wPawnAttacks(int sq) { return wPawnAttacksTable[sq]; }
+    static U64 bPawnAttacks(int sq) { return bPawnAttacksTable[sq]; }
+    static U64 wPawnBlockerMask(int sq) { return wPawnBlockerMaskTable[sq]; }
+    static U64 bPawnBlockerMask(int sq) { return bPawnBlockerMaskTable[sq]; }
+    static U64 squaresBetween(int s1, int s2) { return squaresBetweenTable[s1][s2]; }
 
     /** Get direction between two squares, 8*sign(dy) + sign(dx) */
     static int getDirection(int from, int to);
@@ -142,6 +130,18 @@ public:
     static void staticInitialize();
 
 private:
+    /** Squares attacked by a king on a given square. */
+    static U64 kingAttacksTable[64];
+    static U64 knightAttacksTable[64];
+    static U64 wPawnAttacksTable[64];
+    static U64 bPawnAttacksTable[64];
+
+    // Squares preventing a pawn from being a passed pawn, if occupied by enemy pawn
+    static U64 wPawnBlockerMaskTable[64];
+    static U64 bPawnBlockerMaskTable[64];
+
+    static U64 squaresBetweenTable[64][64];
+
     static U64* rTables[64];
     static U64 rMasks[64];
     static int rBits[64];
@@ -155,8 +155,6 @@ private:
     static vector_aligned<U64> tableData;
 
     static const S8 dirTable[];
-    static const S8 kingDistTable[];
-    static const S8 taxiDistTable[];
     static const int trailingZ[64];
 };
 
@@ -221,14 +219,16 @@ BitBoard::getDirection(int from, int to) {
 
 inline int
 BitBoard::getKingDistance(int from, int to) {
-    int offs = to + (to|7) - from - (from|7) + 0x77;
-    return kingDistTable[offs];
+    int dx = Square::getX(to) - Square::getX(from);
+    int dy = Square::getY(to) - Square::getY(from);
+    return std::max(std::abs(dx), std::abs(dy));
 }
 
 inline int
 BitBoard::getTaxiDistance(int from, int to) {
-    int offs = to + (to|7) - from - (from|7) + 0x77;
-    return taxiDistTable[offs];
+    int dx = Square::getX(to) - Square::getX(from);
+    int dy = Square::getY(to) - Square::getY(from);
+    return std::abs(dx) + std::abs(dy);
 }
 
 inline U64

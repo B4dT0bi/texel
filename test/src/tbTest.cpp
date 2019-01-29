@@ -72,13 +72,13 @@ static int probeCompare(const Position& pos, int ply, int& score) {
     TranspositionTable::TTEntry ent;
     Position pos2(pos);
     int resDTM = TBProbe::gtbProbeDTM(pos2, ply, dtm);
-    ASSERT(pos.equals(pos2));
+    ASSERT(pos == pos2);
     int resWDL = TBProbe::gtbProbeWDL(pos2, ply, wdl);
-    ASSERT(pos.equals(pos2));
+    ASSERT(pos == pos2);
     int resWDL2 = TBProbe::rtbProbeWDL(pos2, ply, wdl2, ent);
-    ASSERT(pos.equals(pos2));
+    ASSERT(pos == pos2);
     int resDTZ = TBProbe::rtbProbeDTZ(pos2, ply, dtz, ent);
-    ASSERT(pos.equals(pos2));
+    ASSERT(pos == pos2);
 
     ASSERT_EQUAL(resDTM, resWDL);
     ASSERT_EQUAL(resWDL, resWDL2);
@@ -465,7 +465,6 @@ TBTest::tbTest() {
     // DTM > 100 when ignoring 50-move rule, RTB probes must be used when available
     Position pos = TextIO::readFEN("1R5Q/8/6k1/8/4q3/8/8/K7 b - - 0 1");
     TranspositionTable::TTEntry ent;
-    ent.clear();
     bool res = TBProbe::tbProbe(pos, ply, -10, 10, tt, ent);
     ASSERT(res);
     ASSERT_EQUAL(TType::T_LE, ent.getType());

@@ -30,6 +30,7 @@
 
 #include <iostream>
 #include <climits>
+#include <functional>
 
 
 bool ProofGame::staticInitDone = false;
@@ -46,7 +47,7 @@ ProofGame::staticInit() {
 
     for (int y = 7; y >= 0; y--) {
         for (int x = 0; x < 8; x++) {
-            int sq = Position::getSquare(x, y);
+            int sq = Square::getSquare(x, y);
             U64 mask = 1ULL << sq;
             if (y < 7) {
                 mask |= wPawnReachable[sq + 8];
@@ -61,7 +62,7 @@ ProofGame::staticInit() {
 
     for (int y = 0; y < 8; y++) {
         for (int x = 0; x < 8; x++) {
-            int sq = Position::getSquare(x, y);
+            int sq = Square::getSquare(x, y);
             U64 mask = 1ULL << sq;
             if (y > 0) {
                 mask |= bPawnReachable[sq - 8];
@@ -248,7 +249,7 @@ ProofGame::getSolution(const Position& startPos, int idx, std::vector<Move>& mov
         UndoInfo ui;
         for (int i = 0; i < moves.size; i++) {
             pos.makeMove(moves[i], ui);
-            if (pos.equals(target)) {
+            if (pos == target) {
                 pos.unMakeMove(moves[i], ui);
                 movePath.push_back(moves[i]);
                 break;
@@ -377,7 +378,7 @@ ProofGame::capturesFeasible(const Position& pos, int pieceCnt[],
             int ti = 0;
             while (to) {
                 int toSq = BitBoard::extractSquare(to);
-                int d = std::abs(Position::getX(fromSq) - Position::getX(toSq));
+                int d = std::abs(Square::getX(fromSq) - Square::getX(toSq));
                 as.setCost(fi, ti, d);
                 ti++;
             }
@@ -569,11 +570,11 @@ ProofGame::computeShortestPathData(const Position& pos,
         bool testPromote = false;
         switch (p) {
         case Piece::WQUEEN: case Piece::WROOK: case Piece::WBISHOP: case Piece::WKNIGHT:
-            if (wtm && Position::getY(sq) == 7)
+            if (wtm && Square::getY(sq) == 7)
                 testPromote = true;
             break;
         case Piece::BQUEEN: case Piece::BROOK: case Piece::BBISHOP: case Piece::BKNIGHT:
-            if (!wtm && Position::getY(sq) == 0)
+            if (!wtm && Square::getY(sq) == 0)
                 testPromote = true;
             break;
         default:
@@ -582,7 +583,7 @@ ProofGame::computeShortestPathData(const Position& pos,
         bool promotionPossible = false;
         if (testPromote) {
             int c = wtm ? 0 : 1;
-            int x = Position::getX(sq);
+            int x = Square::getX(sq);
             Piece::Type pawn = wtm ? Piece::WPAWN : Piece::BPAWN;
             if (!promPath[c][x].spd)
                 promPath[c][x].spd = shortestPaths(pawn, sq, blocked, maxCapt);
@@ -710,7 +711,7 @@ ProofGame::computeCutSets(bool wtm, U64 fromSqMask, int toSq, U64 blocked, int m
 
 U64
 ProofGame::allPawnPaths(bool wtm, int fromSq, int toSq, U64 blocked, int maxCapt) {
-    int yDelta = Position::getY(fromSq) - Position::getY(toSq);
+    int yDelta = Square::getY(fromSq) - Square::getY(toSq);
     maxCapt = std::min(maxCapt, std::abs(yDelta)); // Can't make use of more than yDelta captures
     Piece::Type pawn = wtm ? Piece::WPAWN : Piece::BPAWN;
     Piece::Type oPawn = wtm ? Piece::BPAWN : Piece::WPAWN;
@@ -885,7 +886,7 @@ ProofGame::computeBlocked(const Position& pos, U64& blocked) const {
         m = wGoalPawns & wCurrPawns & ~blocked;
         while (m) {
             int sq = BitBoard::extractSquare(m);
-            U64 tgt = BitBoard::wPawnAttacks[sq] | (1ULL << (sq + 8));
+            U64 tgt = BitBoard::wPawnAttacks(sq) | (1ULL << (sq + 8));
             if ((tgt & wUsefulPawnSquares) == 0)
                 blocked |= (1ULL << sq);
         }
@@ -913,7 +914,7 @@ ProofGame::computeBlocked(const Position& pos, U64& blocked) const {
         m = bGoalPawns & bCurrPawns & ~blocked;
         while (m) {
             int sq = BitBoard::extractSquare(m);
-            U64 tgt = BitBoard::bPawnAttacks[sq] | (1ULL >> (sq - 8));
+            U64 tgt = BitBoard::bPawnAttacks(sq) | (1ULL << (sq - 8));
             if ((tgt & bUsefulPawnSquares) == 0)
                 blocked |= (1ULL << sq);
         }
@@ -977,7 +978,7 @@ ProofGame::shortestPaths(Piece::Type p, int toSq, U64 blocked, int maxCapt) {
                     break;
                 spd->pathLen[sq] = dist;
                 reached |= 1ULL << sq;
-                if (Position::getY(sq) != ((d > 0) ? 5 : 2))
+                if (Square::getY(sq) != ((d > 0) ? 5 : 2))
                     dist++;
             }
         } else {
@@ -990,10 +991,10 @@ ProofGame::shortestPaths(Piece::Type p, int toSq, U64 blocked, int maxCapt) {
                 return std::min(a, b);
             };
             if (p == Piece::WPAWN) {
-                for (int y = Position::getY(toSq) - 1; y >= 0; y--) {
+                for (int y = Square::getY(toSq) - 1; y >= 0; y--) {
                     bool newReached = false;
                     for (int x = 0; x < 8; x++) {
-                        int sq = Position::getSquare(x, y);
+                        int sq = Square::getSquare(x, y);
                         if (blocked & (1ULL << sq))
                             continue;
                         int best = sub->pathLen[sq];
@@ -1014,10 +1015,10 @@ ProofGame::shortestPaths(Piece::Type p, int toSq, U64 blocked, int maxCapt) {
                         break;
                 }
             } else {
-                for (int y = Position::getY(toSq) + 1; y < 8; y++) {
+                for (int y = Square::getY(toSq) + 1; y < 8; y++) {
                     bool newReached = false;
                     for (int x = 0; x < 8; x++) {
-                        int sq = Position::getSquare(x, y);
+                        int sq = Square::getSquare(x, y);
                         if (blocked & (1ULL << sq))
                             continue;
                         int best = sub->pathLen[sq];
@@ -1074,7 +1075,7 @@ ProofGame::computeNeighbors(Piece::Type p, U64 toSquares, U64 blocked) {
     case Piece::WKING: case Piece::BKING:
         while (toSquares) {
             int sq = BitBoard::extractSquare(toSquares);
-            ret |= BitBoard::kingAttacks[sq];
+            ret |= BitBoard::kingAttacks(sq);
         }
         break;
     case Piece::WQUEEN: case Piece::BQUEEN:
@@ -1099,7 +1100,7 @@ ProofGame::computeNeighbors(Piece::Type p, U64 toSquares, U64 blocked) {
     case Piece::WKNIGHT: case Piece::BKNIGHT:
         while (toSquares) {
             int sq = BitBoard::extractSquare(toSquares);
-            ret |= BitBoard::knightAttacks[sq];
+            ret |= BitBoard::knightAttacks(sq);
         }
         break;
     case Piece::WPAWN: {
