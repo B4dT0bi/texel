@@ -91,6 +91,25 @@ UseNullMove
   When set to true, the null move search heuristic is disabled. This can be
   beneficial when analyzing positions where zugzwang is an important factor.
 
+Contempt
+
+  When playing a game this value specifies how big an advantage, measured in
+  centipawns, the engine thinks it has over its opponent, because of differences
+  in playing strengths. A positive value means the engine sees itself as
+  stronger than the opponent and therefore tries to avoid draws by repetition
+  and simplifying piece trades. A negative value has the opposite effect,
+  causing the engine to actively look for draws and simplifying exchanges.
+
+AnalyzeContempt
+
+  When analyzing a position the AnalyzeContempt value is used instead of the
+  Contempt value. AnalyzeContempt is always specified from the white player's
+  point of view, even when it is black's turn to move. For example, if you are
+  analyzing an adjourned game where you are playing white and are happy with a
+  draw, you can set AnalyzeContempt to a negative value, such as -50. The
+  analysis will then take into account that white "wants" a draw, even when you
+  are analyzing a position where it is black's turn to move.
+
 GaviotaTbPath
 
   Semicolon separated list of directories that will be searched for Gaviota

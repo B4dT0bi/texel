@@ -133,11 +133,13 @@ public:
     };
 
     /** Constructor. Creates an empty transposition table with numEntries slots. */
-    explicit TranspositionTable(int log2Size);
+    explicit TranspositionTable(U64 numEntries);
     TranspositionTable(const TranspositionTable& other) = delete;
     TranspositionTable operator=(const TranspositionTable& other) = delete;
 
-    void reSize(int log2Size);
+    void reSize(U64 numEntries);
+
+    void setWhiteContempt(int contempt);
 
     /** Insert an entry in the hash table. */
     void insert(U64 key, const Move& sm, int type, int ply, int depth, int evalScore,
@@ -198,23 +200,26 @@ public:
     U64 byteSize() const;
 
 private:
-    /** Set hashMask from hash table size. */
-    void setHashMask(size_t s);
+    /** Set how much of the hash table to use. */
+    void setUsedSize(U64 s);
 
     /** Get position in hash table given zobrist key. */
     size_t getIndex(U64 key) const;
 
-    /** Get part of zobrist key to store in hash table. */
-    static U64 getStoredKey(U64 key);
-
 
     TTEntryStorage* table; // Points to either tableV or tableLP
-    size_t tableSize;      // Number of entries
+
+    U64 usedSize = 0;        // Number of used entries. Smaller than tableSize when TB used
+    int usedSizeTopBits = 0; // < 256, (usedSizeTopBits << usedSizeShift) <= usedSize
+    int usedSizeShift = 0;
+    U64 usedSizeMask = 0;
+
+    U8 generation = 0;
+    U64 contemptHash = 0;
+    U64 tableSize = 0;     // Number of entries
+
     vector_aligned<TTEntryStorage> tableV;
     std::shared_ptr<TTEntryStorage> tableLP; // Large page allocation if used
-
-    U64 hashMask; // Mask to convert zobrist key to table index
-    U8 generation;
 
     // On-demand TB generation
     TTStorage ttStorage;
@@ -421,31 +426,24 @@ TranspositionTable::TTEntry::getBits(int first, int size) const {
     return (unsigned int)((data >> first) & sizeMask);
 }
 
-
-inline void
-TranspositionTable::setHashMask(size_t s) {
-    hashMask = tableSize - 1;
-    hashMask &= ~((size_t)3);
-}
-
 inline size_t
 TranspositionTable::getIndex(U64 key) const {
-    return (size_t)(key & hashMask);
-}
-
-inline U64
-TranspositionTable::getStoredKey(U64 key) {
-    return key;
+    U64 r = key >> (64 - 16);
+    r *= usedSizeTopBits;
+    r >>= 16;
+    r <<= usedSizeShift;
+    r |= key & usedSizeMask;
+    return (size_t)r;
 }
 
 inline void
 TranspositionTable::probe(U64 key, TTEntry& result) {
+    key ^= contemptHash;
     size_t idx0 = getIndex(key);
-    U64 key2 = getStoredKey(key);
     TTEntry ent;
     for (int i = 0; i < 4; i++) {
         ent.load(table[idx0 + i]);
-        if (ent.getKey() == key2) {
+        if (ent.getKey() == key) {
             if (ent.getGeneration() != generation) {
                 ent.setGeneration(generation);
                 ent.store(table[idx0 + i]);
@@ -460,6 +458,7 @@ TranspositionTable::probe(U64 key, TTEntry& result) {
 inline void
 TranspositionTable::prefetch(U64 key) {
 #ifdef HAS_PREFETCH
+    key ^= contemptHash;
     size_t idx0 = getIndex(key);
     __builtin_prefetch(&table[idx0]);
 #endif

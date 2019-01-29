@@ -165,7 +165,7 @@ const int UNKNOWN_SCORE = -32767; // Represents unknown static eval score
 void
 ChessTool::pgnToFen(std::istream& is, int everyNth) {
     static std::vector<U64> nullHist(SearchConst::MAX_SEARCH_DEPTH * 2);
-    static TranspositionTable tt(19);
+    static TranspositionTable tt(512*1024);
     Notifier notifier;
     ThreadCommunicator comm(nullptr, tt, notifier, false);
     static KillerTable kt;
@@ -1160,6 +1160,9 @@ ChessTool::printParams() {
     os << "bishopKingProtectBonus    : " << bishopKingProtectBonus << std::endl;
     os << "pawnStormBonus            : " << pawnStormBonus << std::endl;
 
+    os << "tempoBonusMG : " << tempoBonusMG << std::endl;
+    os << "tempoBonusEG : " << tempoBonusEG << std::endl;
+
     os << "pawnLoMtrl          : " << pawnLoMtrl << std::endl;
     os << "pawnHiMtrl          : " << pawnHiMtrl << std::endl;
     os << "minorLoMtrl         : " << minorLoMtrl << std::endl;
@@ -1360,6 +1363,9 @@ ChessTool::patchParams(const std::string& directory) {
     replaceValue(knightKingProtectBonus, "knightKingProtectBonus", hppFile);
     replaceValue(bishopKingProtectBonus, "bishopKingProtectBonus", hppFile);
     replaceValue(pawnStormBonus, "pawnStormBonus", hppFile);
+
+    replaceValue(tempoBonusMG, "tempoBonusMG", hppFile);
+    replaceValue(tempoBonusEG, "tempoBonusEG", hppFile);
 
     replaceValue(pawnLoMtrl, "pawnLoMtrl", hppFile);
     replaceValue(pawnHiMtrl, "pawnHiMtrl", hppFile);
@@ -1642,7 +1648,7 @@ ChessTool::qEval(std::vector<PositionInfo>& positions) {
 
 void
 ChessTool::qEval(std::vector<PositionInfo>& positions, const int beg, const int end) {
-    TranspositionTable tt(19);
+    TranspositionTable tt(512*1024);
     Notifier notifier;
     ThreadCommunicator comm(nullptr, tt, notifier, false);
 

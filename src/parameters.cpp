@@ -27,7 +27,7 @@
 #include "computerPlayer.hpp"
 
 namespace UciParams {
-    std::shared_ptr<Parameters::SpinParam> hash(std::make_shared<Parameters::SpinParam>("Hash", 1, 524288, 16));
+    std::shared_ptr<Parameters::SpinParam> hash(std::make_shared<Parameters::SpinParam>("Hash", 1, 1024*1024, 16));
     std::shared_ptr<Parameters::CheckParam> ownBook(std::make_shared<Parameters::CheckParam>("OwnBook", false));
     std::shared_ptr<Parameters::StringParam> bookFile(std::make_shared<Parameters::StringParam>("BookFile", ""));
     std::shared_ptr<Parameters::CheckParam> ponder(std::make_shared<Parameters::CheckParam>("Ponder", false));
@@ -44,6 +44,9 @@ namespace UciParams {
     std::shared_ptr<Parameters::SpinParam> multiPV(std::make_shared<Parameters::SpinParam>("MultiPV", 1, 256, 1));
 
     std::shared_ptr<Parameters::CheckParam> useNullMove(std::make_shared<Parameters::CheckParam>("UseNullMove", true));
+
+    std::shared_ptr<Parameters::SpinParam> contempt(std::make_shared<Parameters::SpinParam>("Contempt", -2000, 2000, 0));
+    std::shared_ptr<Parameters::SpinParam> analyzeContempt(std::make_shared<Parameters::SpinParam>("AnalyzeContempt", -2000, 2000, 0));
 
     std::shared_ptr<Parameters::StringParam> gtbPath(std::make_shared<Parameters::StringParam>("GaviotaTbPath", ""));
     std::shared_ptr<Parameters::SpinParam> gtbCache(std::make_shared<Parameters::SpinParam>("GaviotaTbCache", 1, 2047, 1));
@@ -113,6 +116,9 @@ DEFINE_PARAM(kingSafetyThreshold);
 DEFINE_PARAM(knightKingProtectBonus);
 DEFINE_PARAM(bishopKingProtectBonus);
 DEFINE_PARAM(pawnStormBonus);
+
+DEFINE_PARAM(tempoBonusMG);
+DEFINE_PARAM(tempoBonusEG);
 
 DEFINE_PARAM(pawnLoMtrl);
 DEFINE_PARAM(pawnHiMtrl);
@@ -626,6 +632,8 @@ Parameters::Parameters() {
     addPar(UciParams::multiPV);
 
     addPar(UciParams::useNullMove);
+    addPar(UciParams::contempt);
+    addPar(UciParams::analyzeContempt);
 
     addPar(UciParams::gtbPath);
     addPar(UciParams::gtbCache);
@@ -692,6 +700,9 @@ Parameters::Parameters() {
     REGISTER_PARAM(knightKingProtectBonus, "KnightKingProtectBonus");
     REGISTER_PARAM(bishopKingProtectBonus, "BishopKingProtectBonus");
     REGISTER_PARAM(pawnStormBonus, "PawnStormBonus");
+
+    REGISTER_PARAM(tempoBonusMG, "TempoBonusMG");
+    REGISTER_PARAM(tempoBonusEG, "TempoBonusEG");
 
     REGISTER_PARAM(pawnLoMtrl, "PawnLoMtrl");
     REGISTER_PARAM(pawnHiMtrl, "PawnHiMtrl");
@@ -813,7 +824,7 @@ Parameters::getParam(const std::string& name) const {
 
 void
 Parameters::addPar(const std::shared_ptr<ParamBase>& p) {
-    std::string name = toLowerCase(p->name);
+    std::string name = toLowerCase(p->getName());
     assert(params.find(name) == params.end());
     params[name] = p;
     paramNames.push_back(name);

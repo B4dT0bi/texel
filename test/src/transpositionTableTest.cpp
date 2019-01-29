@@ -34,9 +34,6 @@
 
 using TTEntry = TranspositionTable::TTEntry;
 
-/**
- * Test of TTEntry nested class, of class TranspositionTable.
- */
 static void
 testTTEntry() {
     const int mate0 = SearchConst::MATE0;
@@ -129,12 +126,9 @@ testTTEntry() {
     ASSERT(ent2.betterThan(ent1, 0));
 }
 
-/**
- * Test of insert method, of class TranspositionTable.
- */
 static void
 testInsert() {
-    TranspositionTable tt(16);
+    TranspositionTable tt(64*1024);
     Position pos = TextIO::readFEN(TextIO::startPosFEN);
     std::string moves[] = {
         "e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "b5", "Bb3", "Nf6", "O-O", "Be7", "Re1"

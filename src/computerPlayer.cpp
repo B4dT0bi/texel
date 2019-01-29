@@ -41,7 +41,7 @@ static StaticInitializer<ComputerPlayer> cpInit;
 
 void
 ComputerPlayer::staticInitialize() {
-    std::string name = "Texel 1.08a5";
+    std::string name = "Texel 1.08a8";
     if (sizeof(char*) == 4)
         name += " 32-bit";
     engineName = name;
@@ -72,7 +72,7 @@ ComputerPlayer::initEngine() {
 }
 
 ComputerPlayer::ComputerPlayer()
-    : tt(15), book(false) {
+    : tt(32*1024), book(false) {
     initEngine();
     et = Evaluate::getEvalHashTables();
     minTimeMillis = 10000;
