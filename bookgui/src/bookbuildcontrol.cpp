@@ -30,8 +30,9 @@
 #include "gametree.hpp"
 
 
-BookBuildControl::BookBuildControl(ChangeListener& listener0)
-    : listener(listener0), nPendingBookTasks(0), tt(27), pd(tt) {
+BookBuildControl::BookBuildControl(ChangeListener& listener)
+    : listener(listener), nPendingBookTasks(0), tt(27),
+      comm(nullptr, notifier) {
     ComputerPlayer::initEngine();
     setupTB();
     et = Evaluate::getEvalHashTables();
@@ -96,8 +97,8 @@ BookBuildControl::readFromFile(const std::string& newFileName) {
             std::lock_guard<std::mutex> L(mutex);
             bgThread->detach();
             bgThread.reset();
-            bgThreadCv.notify_all();
         }
+        bgThreadCv.notify_all();
         notify(BookBuildControl::Change::OPEN_COMPLETE);
     };
     bgThread = std::make_shared<std::thread>(f);
@@ -117,8 +118,8 @@ BookBuildControl::saveToFile(const std::string& newFileName) {
             std::lock_guard<std::mutex> L(mutex);
             bgThread2->detach();
             bgThread2.reset();
-            bgThreadCv.notify_all();
         }
+        bgThreadCv.notify_all();
         notify(BookBuildControl::Change::PROCESSING_COMPLETE);
     };
     bgThread2 = std::make_shared<std::thread>(f);
@@ -151,12 +152,17 @@ BookBuildControl::startSearch() {
     class BookListener : public BookBuild::Book::Listener {
     public:
         BookListener(BookBuildControl& bbc0) : bbc(bbc0) {}
-        void queueChanged(int nPendingBookTasks) override {
+        void queueSizeChanged(int nPendingBookTasks) override {
             {
                 std::lock_guard<std::mutex> L(bbc.mutex);
                 bbc.nPendingBookTasks = nPendingBookTasks;
             }
+            bbc.notify(BookBuildControl::Change::QUEUE_SIZE);
+        }
+        void queueChanged() override {
             bbc.notify(BookBuildControl::Change::QUEUE);
+        }
+        void treeChanged() override {
             bbc.notify(BookBuildControl::Change::TREE);
         }
     private:
@@ -175,8 +181,8 @@ BookBuildControl::startSearch() {
             std::lock_guard<std::mutex> L(mutex);
             bgThread->detach();
             bgThread.reset();
-            bgThreadCv.notify_all();
         }
+        bgThreadCv.notify_all();
         notify(BookBuildControl::Change::QUEUE);
         notify(BookBuildControl::Change::TREE);
     };
@@ -258,8 +264,8 @@ BookBuildControl::importPGN(const GameTree& gt, int maxPly) {
             std::lock_guard<std::mutex> L(mutex);
             bgThread2->detach();
             bgThread2.reset();
-            bgThreadCv.notify_all();
         }
+        bgThreadCv.notify_all();
         notify(BookBuildControl::Change::PROCESSING_COMPLETE);
         notify(BookBuildControl::Change::TREE);
     };
@@ -327,14 +333,12 @@ BookBuildControl::startAnalysis(const std::vector<Move>& moves) {
     };
 
     Search::SearchTables st(tt, kt, ht, *et);
-    sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, pd, nullptr, treeLog);
-    sc->setListener(make_unique<SearchListener>(*this, pos));
+    sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, comm, treeLog);
+    scListener = make_unique<SearchListener>(*this, pos);
+    sc->setListener(*scListener);
     std::shared_ptr<MoveList> moveList(std::make_shared<MoveList>());
     MoveGen::pseudoLegalMoves(pos, *moveList);
     MoveGen::removeIllegal(pos, *moveList);
-    pd.addRemoveWorkers(0);
-    pd.wq.resetSplitDepth();
-    pd.startAll();
     sc->timeLimit(-1, -1);
     int minProbeDepth = UciParams::minProbeDepth->getIntPar();
     auto f = [this,moveList,minProbeDepth]() {
@@ -350,7 +354,6 @@ BookBuildControl::stopAnalysis() {
         engineThread->join();
         engineThread.reset();
         sc.reset();
-        pd.stopAll();
     }
 }
 

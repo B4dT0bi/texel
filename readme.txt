@@ -109,6 +109,13 @@ Clear Hash
   When activated, clears the hash table and the history heuristic table, so that
   the next search behaves as if the engine had just been started.
 
+AnalysisAgeHash
+
+  When set to false the transposition table is not "aged" when starting a new
+  search in analysis mode. This helps keeping older but deeper entries around in
+  the transposition table, which is useful when analysing a position and making
+  and un-making moves to explore the position.
+
 
 Tablebases
 ----------

@@ -44,6 +44,7 @@ namespace UciParams {
     std::shared_ptr<Parameters::StringParam> rtbPath(std::make_shared<Parameters::StringParam>("SyzygyPath", ""));
     std::shared_ptr<Parameters::SpinParam> minProbeDepth(std::make_shared<Parameters::SpinParam>("MinProbeDepth", 0, 100, 1));
 
+    std::shared_ptr<Parameters::CheckParam> analysisAgeHash(std::make_shared<Parameters::CheckParam>("AnalysisAgeHash", true));
     std::shared_ptr<Parameters::ButtonParam> clearHash(std::make_shared<Parameters::ButtonParam>("Clear Hash"));
 }
 
@@ -606,7 +607,7 @@ ParamTable<9> stalePawnFactor { 0, 192, useUciParam,
 
 Parameters::Parameters() {
     std::string about = ComputerPlayer::engineName +
-                        " by Peter Osterlund, see http://web.comhem.se/petero2home/javachess/index.html#texel";
+                        " by Peter Osterlund, see http://hem.bredband.net/petero2b/javachess/index.html#texel";
     addPar(std::make_shared<StringParam>("UCI_EngineAbout", about));
 
     addPar(UciParams::hash);
@@ -625,6 +626,7 @@ Parameters::Parameters() {
     addPar(UciParams::gtbCache);
     addPar(UciParams::rtbPath);
     addPar(UciParams::minProbeDepth);
+    addPar(UciParams::analysisAgeHash);
     addPar(UciParams::clearHash);
 
     // Evaluation parameters

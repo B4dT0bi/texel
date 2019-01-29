@@ -24,6 +24,8 @@
  */
 
 #include "computerPlayer.hpp"
+#include "search.hpp"
+#include "parallel.hpp"
 #include "textio.hpp"
 #include "tbprobe.hpp"
 
@@ -36,7 +38,7 @@ static StaticInitializer<ComputerPlayer> cpInit;
 
 void
 ComputerPlayer::staticInitialize() {
-    std::string name = "Texel 1.07a6";
+    std::string name = "Texel 1.07a9lazy";
     if (sizeof(char*) == 4)
         name += " 32-bit";
     engineName = name;
@@ -67,9 +69,7 @@ ComputerPlayer::initEngine() {
 }
 
 ComputerPlayer::ComputerPlayer()
-    : tt(15), pd(tt),
-      book(false)
-{
+    : tt(15), book(false) {
     initEngine();
     et = Evaluate::getEvalHashTables();
     minTimeMillis = 10000;
@@ -84,7 +84,7 @@ ComputerPlayer::ComputerPlayer()
 std::string
 ComputerPlayer::getCommand(const Position& posIn, bool drawOffer, const std::vector<Position>& history) {
     // Create a search object
-    std::vector<U64> posHashList(200 + history.size());
+    std::vector<U64> posHashList(SearchConst::MAX_SEARCH_DEPTH * 2 + history.size());
     int posHashListSize = 0;
     for (size_t i = 0; i < history.size(); i++)
         posHashList[posHashListSize++] = history[i].zobristHash();
@@ -94,7 +94,9 @@ ComputerPlayer::getCommand(const Position& posIn, bool drawOffer, const std::vec
     History ht;
     Search::SearchTables st(tt, kt, ht, *et);
     TreeLogger treeLog;
-    Search sc(pos, posHashList, posHashListSize, st, pd, nullptr, treeLog);
+    Notifier notifier;
+    ThreadCommunicator comm(nullptr, notifier);
+    Search sc(pos, posHashList, posHashListSize, st, comm, treeLog);
 
     // Determine all legal moves
     MoveList moves;
@@ -174,13 +176,15 @@ ComputerPlayer::timeLimit(int minTimeLimit, int maxTimeLimit) {
 std::pair<Move, std::string>
 ComputerPlayer::searchPosition(Position& pos, int maxTimeMillis) {
     // Create a search object
-    std::vector<U64> posHashList(200);
+    std::vector<U64> posHashList(SearchConst::MAX_SEARCH_DEPTH * 2);
     tt.nextGeneration();
     KillerTable kt;
     History ht;
     Search::SearchTables st(tt, kt, ht, *et);
     TreeLogger treeLog;
-    Search sc(pos, posHashList, 0, st, pd, nullptr, treeLog);
+    Notifier notifier;
+    ThreadCommunicator comm(nullptr, notifier);
+    Search sc(pos, posHashList, 0, st, comm, treeLog);
 
     // Determine all legal moves
     MoveList moves;

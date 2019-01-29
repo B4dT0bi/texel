@@ -26,6 +26,7 @@
 #define _GLIBCXX_USE_NANOSLEEP
 
 #include "enginecontrol.hpp"
+#include "uciprotocol.hpp"
 #include "util/random.hpp"
 #include "searchparams.hpp"
 #include "book.hpp"
@@ -40,64 +41,175 @@
 #include <chrono>
 
 
-EngineControl::SearchListener::SearchListener(std::ostream& os0)
-    : os(os0)
-{
+EngineMainThread::EngineMainThread() {
+    comm = make_unique<ThreadCommunicator>(nullptr, notifier);
 }
 
 void
-EngineControl::SearchListener::notifyDepth(int depth) {
-//    std::lock_guard<std::mutex> L(Logger::getLogMutex());
-    os << "info depth " << depth << std::endl;
-}
+EngineMainThread::mainLoop() {
+    Numa::instance().bindThread(0);
 
-void
-EngineControl::SearchListener::notifyCurrMove(const Move& m, int moveNr) {
-//    std::lock_guard<std::mutex> L(Logger::getLogMutex());
-    os << "info currmove " << moveToString(m) << " currmovenumber " << moveNr << std::endl;
-}
-
-void
-EngineControl::SearchListener::notifyPV(int depth, int score, int time, U64 nodes, int nps, bool isMate,
-                                        bool upperBound, bool lowerBound, const std::vector<Move>& pv,
-                                        int multiPVIndex, U64 tbHits) {
-//    std::lock_guard<std::mutex> L(Logger::getLogMutex());
-    std::string pvBuf;
-    for (size_t i = 0; i < pv.size(); i++) {
-        pvBuf += ' ';
-        pvBuf += moveToString(pv[i]);
+    while (true) {
+        notifier.wait();
+        if (quitFlag)
+            break;
+        setOptions();
+        if (search) {
+            doSearch();
+            setOptions();
+            {
+                std::lock_guard<std::mutex> L(mutex);
+                search = false;
+            }
+            searchStopped.notify_all();
+        }
     }
-    std::string bound;
-    if (upperBound) {
-        bound = " upperbound";
-    } else if (lowerBound) {
-        bound = " lowerbound";
-    }
-    os << "info depth " << depth << " score " << (isMate ? "mate " : "cp ")
-       << score << bound << " time " << time << " nodes " << nodes
-       << " nps " << nps;
-    if (tbHits > 0)
-        os << " tbhits " << tbHits;
-    if (multiPVIndex >= 0)
-        os << " multipv " << (multiPVIndex + 1);
-    os << " pv" << pvBuf << std::endl;
 }
 
 void
-EngineControl::SearchListener::notifyStats(U64 nodes, int nps, int hashFull, U64 tbHits, int time) {
-    os << "info nodes " << nodes << " nps " << nps << " hashfull " << hashFull;
-    if (tbHits > 0)
-        os << " tbhits " << tbHits;
-    os << " time " << time << std::endl;
+EngineMainThread::quit() {
+    std::lock_guard<std::mutex> L(mutex);
+    quitFlag = true;
+    notifier.notify();
 }
 
-EngineControl::EngineControl(std::ostream& o)
-    : os(o),
-      shouldDetach(true),
-      tt(8),
-      pd(tt),
-      randomSeed(0)
-{
+void
+EngineMainThread::startSearch(EngineControl* engineControl,
+                              std::shared_ptr<Search>& sc, const Position& pos,
+                              TranspositionTable& tt,
+                              std::shared_ptr<MoveList>& moves,
+                              bool ownBook, bool analyseMode,
+                              int maxDepth, int maxNodes,
+                              int maxPV, int minProbeDepth,
+                              std::atomic<bool>& ponder, std::atomic<bool>& infinite) {
+    WorkerThread::createWorkers(1, comm.get(),
+                                UciParams::threads->getIntPar() - 1,
+                                tt, children);
+    {
+        std::lock_guard<std::mutex> L(mutex);
+        this->engineControl = engineControl;
+        this->sc = sc;
+        this->pos = pos;
+        this->moves = moves;
+        this->ownBook = ownBook;
+        this->analyseMode = analyseMode;
+        this->maxDepth = maxDepth;
+        this->maxNodes = maxNodes;
+        this->maxPV = maxPV;
+        this->minProbeDepth = minProbeDepth;
+        this->ponder = &ponder;
+        this->infinite = &infinite;
+        search = true;
+    }
+    notifier.notify();
+}
+
+void
+EngineMainThread::waitStop() {
+    std::unique_lock<std::mutex> L(mutex);
+    while (search)
+        searchStopped.wait(L);
+    sc.reset();
+}
+
+void
+EngineMainThread::setOptionWhenIdle(const std::string& optionName,
+                                    const std::string& optionValue) {
+    {
+        std::lock_guard<std::mutex> L(mutex);
+        Parameters& params = Parameters::instance();
+        if (params.getParam(optionName)) {
+            pendingOptions[optionName] = optionValue;
+            optionsSetFinished = false;
+        }
+    }
+    notifier.notify();
+}
+
+void
+EngineMainThread::waitOptionsSet() {
+    std::unique_lock<std::mutex> L(mutex);
+    while (!optionsSetFinished)
+        optionsSet.wait(L);
+}
+
+void
+EngineMainThread::doSearch() {
+    Move m;
+    if (ownBook && !analyseMode) {
+        Book book(false);
+        book.getBookMove(pos, m);
+    }
+
+    bool waitForStop = false;
+    if (m.isEmpty()) {
+        m = sc->iterativeDeepening(*moves, maxDepth, maxNodes, false, maxPV, false,
+                                   minProbeDepth, clearHistory);
+        waitForStop = true;
+    }
+    clearHistory = false;
+    while (*ponder || *infinite) {
+        // We should not respond until told to do so.
+        // Just wait until we are allowed to respond.
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    engineControl->finishSearch(pos, m);
+
+    if (waitForStop) {
+        comm->sendStopSearch();
+        class Handler : public Communicator::CommandHandler {
+        public:
+            Handler(Communicator* comm) : comm(comm) {}
+            void stopAck() override { comm->sendStopAck(true); }
+        private:
+            Communicator* comm;
+        };
+        Handler handler(comm.get());
+        comm->sendStopAck(false);
+        while (true) {
+            comm->poll(handler);
+            if (comm->hasStopAck())
+                break;
+            notifier.wait();
+        }
+        notifier.notify();
+    }
+}
+
+void
+EngineMainThread::setOptions() {
+    while (true) {
+        std::map<std::string, std::string> options;
+        {
+            std::lock_guard<std::mutex> L(mutex);
+            options.swap(pendingOptions);
+            if (options.empty()) {
+                optionsSetFinished = true;
+                optionsSet.notify_all();
+                return;
+            }
+        }
+
+        Parameters& params = Parameters::instance();
+        for (auto& p : options) {
+            const std::string& optionName = p.first;
+            const std::string& optionValue = p.second;
+            std::shared_ptr<Parameters::ParamBase> par = params.getParam(optionName);
+            if (par && par->type == Parameters::STRING && optionValue == "<empty>")
+                params.set(optionName, "");
+            else
+                params.set(optionName, optionValue);
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+
+EngineControl::EngineControl(std::ostream& o, EngineMainThread& engineThread0,
+                             SearchListener& listener)
+    : os(o), engineThread(engineThread0), listener(listener),
+      tt(8), randomSeed(0) {
     Numa::instance().bindThread(0);
     hashParListenerId = UciParams::hash->addListener([this]() {
         setupTT();
@@ -105,6 +217,7 @@ EngineControl::EngineControl(std::ostream& o)
     clearHashParListenerId = UciParams::clearHash->addListener([this]() {
         tt.clear();
         ht.init();
+        engineThread.setClearHistory();
     }, false);
     et = Evaluate::getEvalHashTables();
 }
@@ -116,7 +229,7 @@ EngineControl::~EngineControl() {
 
 void
 EngineControl::startSearch(const Position& pos, const std::vector<Move>& moves, const SearchParams& sPar) {
-    stopSearch();
+    stopThread();
     setupPosition(pos, moves);
     computeTimeLimit(sPar);
     ponder = false;
@@ -127,7 +240,7 @@ EngineControl::startSearch(const Position& pos, const std::vector<Move>& moves, 
 
 void
 EngineControl::startPonder(const Position& pos, const std::vector<Move>& moves, const SearchParams& sPar) {
-    stopSearch();
+    stopThread();
     setupPosition(pos, moves);
     computeTimeLimit(sPar);
     ponder = true;
@@ -137,17 +250,12 @@ EngineControl::startPonder(const Position& pos, const std::vector<Move>& moves, 
 
 void
 EngineControl::ponderHit() {
-    std::shared_ptr<Search> mySearch;
-    {
-        std::lock_guard<std::mutex> L(threadMutex);
-        mySearch = sc;
-    }
-    if (mySearch) {
+    if (sc) {
         if (onePossibleMove) {
             if (minTimeLimit > 1) minTimeLimit = 1;
             if (maxTimeLimit > 1) maxTimeLimit = 1;
         }
-        mySearch->timeLimit(minTimeLimit, maxTimeLimit, earlyStopPercentage);
+        sc->timeLimit(minTimeLimit, maxTimeLimit, earlyStopPercentage);
     }
     infinite = (maxTimeLimit < 0) && (maxDepth < 0) && (maxNodes < 0);
     ponder = false;
@@ -161,8 +269,7 @@ EngineControl::stopSearch() {
 void
 EngineControl::newGame() {
     randomSeed = Random().nextU64();
-    tt.clear();
-    ht.init();
+    setOption("Clear Hash", "");
 }
 
 /**
@@ -220,8 +327,9 @@ void
 EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int earlyStopPercentage,
                            int maxDepth, int maxNodes) {
     Search::SearchTables st(tt, kt, ht, *et);
-    sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, pd, nullptr, treeLog);
-    sc->setListener(make_unique<SearchListener>(os));
+    Communicator* comm = engineThread.getCommunicator();
+    sc = std::make_shared<Search>(pos, posHashList, posHashListSize, st, *comm, treeLog);
+    sc->setListener(listener);
     sc->setStrength(UciParams::strength->getIntPar(), randomSeed);
     std::shared_ptr<MoveList> moves(std::make_shared<MoveList>());
     MoveGen::pseudoLegalMoves(pos, *moves);
@@ -241,9 +349,6 @@ EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int earlyStopPerc
             }
         }
     }
-    pd.addRemoveWorkers(UciParams::threads->getIntPar() - 1);
-    pd.wq.resetSplitDepth();
-    pd.startAll();
     sc->timeLimit(minTimeLimit, maxTimeLimit, earlyStopPercentage);
     bool ownBook = UciParams::ownBook->getBoolPar();
     bool analyseMode = UciParams::analyseMode->getBoolPar();
@@ -256,64 +361,23 @@ EngineControl::startThread(int minTimeLimit, int maxTimeLimit, int earlyStopPerc
         ss.precision(2);
         ss << std::fixed << (evScore / 100.0);
         os << "info string Eval: " << ss.str() << std::endl;
+        if (UciParams::analysisAgeHash->getBoolPar())
+            tt.nextGeneration();
     } else {
         tt.nextGeneration();
     }
-    auto f = [this,ownBook,analyseMode,moves,maxDepth,maxNodes,maxPV,minProbeDepth]() {
-        Numa::instance().bindThread(0);
-        Move m;
-        if (ownBook && !analyseMode) {
-            Book book(false);
-            book.getBookMove(pos, m);
-        }
-        if (m.isEmpty())
-            m = sc->iterativeDeepening(*moves, maxDepth, maxNodes, false, maxPV, false, minProbeDepth);
-        while (ponder || infinite) {
-            // We should not respond until told to do so. Just wait until
-            // we are allowed to respond.
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        Move ponderMove = getPonderMove(pos, m);
-        std::lock_guard<std::mutex> L(threadMutex);
-        os << "bestmove " << moveToString(m);
-        if (!ponderMove.isEmpty())
-            os << " ponder " << moveToString(ponderMove);
-        os << std::endl;
-        if (shouldDetach) {
-            engineThread->detach();
-            pd.stopAll();
-            pd.fhInfo.reScale();
-        }
-        engineThread.reset();
-        sc.reset();
-        for (auto& p : pendingOptions)
-            setOption(p.first, p.second, false);
-        pendingOptions.clear();
-    };
-    shouldDetach = true;
-    {
-        std::lock_guard<std::mutex> L(threadMutex);
-        engineThread = std::make_shared<std::thread>(f);
-    }
+    engineThread.startSearch(this, sc, pos, tt, moves, ownBook, analyseMode, maxDepth,
+                             maxNodes, maxPV, minProbeDepth, ponder, infinite);
 }
 
 void
 EngineControl::stopThread() {
-    std::shared_ptr<std::thread> myThread;
-    {
-        std::lock_guard<std::mutex> L(threadMutex);
-        myThread = engineThread;
-        if (myThread) {
-            sc->timeLimit(0, 0);
-            infinite = false;
-            ponder = false;
-            shouldDetach = false;
-        }
-    }
-    if (myThread)
-        myThread->join();
-    pd.stopAll();
-    pd.fhInfo.reScale();
+    if (sc)
+        sc->timeLimit(0, 0);
+    infinite = false;
+    ponder = false;
+    engineThread.waitStop();
+    engineThread.waitOptionsSet();
 }
 
 void
@@ -342,7 +406,7 @@ EngineControl::setupTT() {
 void
 EngineControl::setupPosition(Position pos, const std::vector<Move>& moves) {
     UndoInfo ui;
-    posHashList.resize(200 + moves.size());
+    posHashList.resize(SearchConst::MAX_SEARCH_DEPTH * 2 + moves.size());
     posHashListSize = 0;
     for (size_t i = 0; i < moves.size(); i++) {
         const Move& m = moves[i];
@@ -382,35 +446,6 @@ EngineControl::getPonderMove(Position pos, const Move& m) {
             ret = Move();
     }
     pos.unMakeMove(m, ui);
-    return ret;
-}
-
-std::string
-EngineControl::moveToString(const Move& m) {
-    if (m.isEmpty())
-        return "0000";
-    std::string ret = TextIO::squareToString(m.from());
-    ret += TextIO::squareToString(m.to());
-    switch (m.promoteTo()) {
-    case Piece::WQUEEN:
-    case Piece::BQUEEN:
-        ret += 'q';
-        break;
-    case Piece::WROOK:
-    case Piece::BROOK:
-        ret += 'r';
-        break;
-    case Piece::WBISHOP:
-    case Piece::BBISHOP:
-        ret += 'b';
-        break;
-    case Piece::WKNIGHT:
-    case Piece::BKNIGHT:
-        ret += 'n';
-        break;
-    default:
-        break;
-    }
     return ret;
 }
 
@@ -456,20 +491,12 @@ EngineControl::printOptions(std::ostream& os) {
 }
 
 void
-EngineControl::setOption(const std::string& optionName, const std::string& optionValue,
-                         bool deferIfBusy) {
-    Parameters& params = Parameters::instance();
-    if (deferIfBusy) {
-        std::lock_guard<std::mutex> L(threadMutex);
-        if (engineThread) {
-            if (params.getParam(optionName))
-                pendingOptions[optionName] = optionValue;
-            return;
-        }
-    }
-    std::shared_ptr<Parameters::ParamBase> par = params.getParam(optionName);
-    if (par && par->type == Parameters::STRING && optionValue == "<empty>")
-        params.set(optionName, "");
-    else
-        params.set(optionName, optionValue);
+EngineControl::setOption(const std::string& optionName, const std::string& optionValue) {
+    engineThread.setOptionWhenIdle(optionName, optionValue);
+}
+
+void
+EngineControl::finishSearch(Position& pos, const Move& bestMove) {
+    Move ponderMove = getPonderMove(pos, bestMove);
+    listener.notifyPlayedMove(bestMove, ponderMove);
 }

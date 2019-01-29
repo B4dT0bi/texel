@@ -30,6 +30,7 @@
 #include "textio.hpp"
 #include "gametree.hpp"
 #include <unordered_set>
+#include <random>
 
 MatchBookCreator::MatchBookCreator() {
 
@@ -42,7 +43,9 @@ MatchBookCreator::createBook(int depth, int searchTime, std::ostream& os) {
     std::vector<BookLine> lines;
     for (const auto& bl : bookLines)
         lines.push_back(bl.second);
-    std::random_shuffle(lines.begin(), lines.end());
+    auto r = std::random_device()();
+    std::mt19937 rndGen(r);
+    std::shuffle(lines.begin(), lines.end(), rndGen);
     evaluateBookLines(lines, searchTime, os);
 }
 
@@ -90,10 +93,11 @@ MatchBookCreator::evaluateBookLines(std::vector<BookLine>& lines, int searchTime
                                     std::ostream& os) {
     const int nLines = lines.size();
     TranspositionTable tt(28);
-    ParallelData pd(tt);
+    Notifier notifier;
+    ThreadCommunicator comm(nullptr, notifier);
     std::shared_ptr<Evaluate::EvalHashTables> et;
 
-#pragma omp parallel for schedule(dynamic) default(none) shared(lines,tt,pd,searchTime,os) private(et)
+#pragma omp parallel for schedule(dynamic) default(none) shared(lines,tt,comm,searchTime,os) private(et)
     for (int i = 0; i < nLines; i++) {
         BookLine& bl = lines[i];
 
@@ -105,7 +109,7 @@ MatchBookCreator::evaluateBookLines(std::vector<BookLine>& lines, int searchTime
 
         Position pos = TextIO::readFEN(TextIO::startPosFEN);
         UndoInfo ui;
-        std::vector<U64> posHashList(200 + bl.moves.size());
+        std::vector<U64> posHashList(SearchConst::MAX_SEARCH_DEPTH * 2 + bl.moves.size());
         int posHashListSize = 0;
         for (const Move& m : bl.moves) {
             posHashList[posHashListSize++] = pos.zobristHash();
@@ -119,7 +123,7 @@ MatchBookCreator::evaluateBookLines(std::vector<BookLine>& lines, int searchTime
         MoveGen::removeIllegal(pos, legalMoves);
 
         Search::SearchTables st(tt, kt, ht, *et);
-        Search sc(pos, posHashList, posHashListSize, st, pd, nullptr, treeLog);
+        Search sc(pos, posHashList, posHashListSize, st, comm, treeLog);
         sc.timeLimit(searchTime, searchTime);
 
         int maxDepth = -1;
@@ -225,7 +229,7 @@ public:
     /** Return standard deviation of the mean score. */
     double getStdDevScore() const {
         double N = nScores;
-        double sDev = ::sqrt(1/(N - 1) * (scoreSum2 - scoreSum * scoreSum / N));
+        double sDev = sqrt(1/(N - 1) * (scoreSum2 - scoreSum * scoreSum / N));
         return sDev / sqrt(N);
     }
 

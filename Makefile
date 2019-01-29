@@ -1,8 +1,9 @@
 SRC_COMMON	= bitBoard.cpp book.cpp computerPlayer.cpp endGameEval.cpp evaluate.cpp \
 		  game.cpp history.cpp humanPlayer.cpp killerTable.cpp kpkTable.cpp \
-		  krkpTable.cpp krpkrTable.cpp material.cpp move.cpp moveGen.cpp numa.cpp parameters.cpp \
-		  parallel.cpp piece.cpp polyglot.cpp position.cpp search.cpp tbgen.cpp tbprobe.cpp \
-		  textio.cpp transpositionTable.cpp treeLogger.cpp \
+		  krkpTable.cpp krpkrTable.cpp largePageAlloc.cpp material.cpp move.cpp \
+		  moveGen.cpp numa.cpp parameters.cpp parallel.cpp piece.cpp polyglot.cpp \
+		  position.cpp search.cpp tbgen.cpp tbprobe.cpp textio.cpp \
+		  transpositionTable.cpp treeLogger.cpp \
 		  util/logger.cpp util/random.cpp util/timeUtil.cpp util/util.cpp \
 		  syzygy/rtb-probe.cpp
 
@@ -38,25 +39,28 @@ INC_BOOKGUI	= -Isrc -Iutil/src
 # The following preprocessor symbols can be defined to enable CPU, OS and compiler
 # specific features:
 #
-# -DHAS_POPCNT    : Use CPU popcount instructions to speed up counting of number of
-#                   1 bits in a bitboard object. Requires a compiler that supports the
-#                   __builtin_popcountl() function and a CPU that supports the
-#                   corresponding machine code instruction.
+# -DHAS_POPCNT      : Use CPU popcount instructions to speed up counting of number of
+#                     1 bits in a bitboard object. Requires a compiler that supports the
+#                     __builtin_popcountl() function and a CPU that supports the
+#                     corresponding machine code instruction.
 #
-# -DHAS_CTZ       : Use a special CPU instruction to find the first 1 bit in a bitboard
-#                   object. Requires a compiler that supports the __builtin_ctzl function
-#                   and a CPU that supports the corresponding machine code instruction.
+# -DHAS_CTZ         : Use a special CPU instruction to find the first 1 bit in a bitboard
+#                     object. Requires a compiler that supports the __builtin_ctzl function
+#                     and a CPU that supports the corresponding machine code instruction.
 #
-# -DHAS_PREFETCH  : Use CPU prefetch instructions to speed up hash table access. Requires
-#                   a compiler that supports the __builtin_prefetch() function and a CPU
-#                   that supports the corresponding machine code instruction.
+# -DHAS_PREFETCH    : Use CPU prefetch instructions to speed up hash table access. Requires
+#                     a compiler that supports the __builtin_prefetch() function and a CPU
+#                     that supports the corresponding machine code instruction.
 #
-# -DHAS_RT        : Use the posix clock_gettime() function to get the current time
-#                   with nanosecond resolution. When used "-lrt" may have to be added to
-#                   the linker flags.
+# -DHAS_RT          : Use the posix clock_gettime() function to get the current time
+#                     with nanosecond resolution. When used "-lrt" may have to be added to
+#                     the linker flags.
 #
-# -DNUMA          : Optimize thread affinity and memory allocation when running on
-#                   NUMA hardware.
+# -DNUMA            : Optimize thread affinity and memory allocation when running on
+#                     NUMA hardware.
+#
+# -DUSE_LARGE_PAGES : Use large pages when allocating memory for the transposition table,
+#                     if supported by the operating system.
 
 # Definitions used by the "texel" target
 CXX_DEF		= g++
@@ -84,7 +88,7 @@ OBJS_BOOKGUI_DEF = $(patsubst %.cpp,objdef/%.o,$(SRC_BOOKGUI))
 # Definitions used by the "texel32" and "texel64" targets
 CXX		= g++
 FLAGS		= -O3 -Wall -pthread $(INC) -march=corei7 -Wno-misleading-indentation \
-		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT
+		  -DHAS_CTZ -DHAS_POPCNT -DHAS_PREFETCH -DHAS_RT -DUSE_LARGE_PAGES
 CXXFLAGS	= -std=c++11 $(FLAGS)
 CC		= gcc
 CFLAGS		= $(FLAGS)
@@ -213,13 +217,19 @@ dist	: texel.7z
 texel.7z: FORCE $(ALL_EXE) strip
 	(VER=$$(echo -e 'uci\nquit' | ./texel64 | grep 'id name' | awk '{print $$4}' | tr -d .) ; \
 	 rm -f texel$${VER}.7z ; \
-	 7za a texel$${VER}.7z Makefile .depend COPYING readme.txt src/*.?pp src/util/*.?pp \
+	 rm -rf texel$${VER} ; \
+	 mkdir texel$${VER} ; \
+	 cp --parents \
+		Makefile .depend COPYING readme.txt src/*.?pp src/util/*.?pp \
 		src/gtb/*.[ch] src/gtb/*.txt src/gtb/sysport/*.[ch] src/gtb/compression/*.[ch] \
 		src/gtb/compression/lzma/*.[ch] src/syzygy/*.?pp \
 		test/src/*.?pp test/cute/* util/src/*.?pp util/src/test/*.?pp util/cute/* \
 		bookgui/src/*.?pp bookgui/src/*.xml bookgui/src/ChessCases.ttf \
-		$(ALL_EXE) texelbook.bin ; \
-	7za d texel$${VER}.7z bookgui/src/resource.cpp)
+		$(ALL_EXE) texelbook.bin texel$${VER}/; \
+	 chmod -R ug+w texel$${VER} ; \
+	 rm texel$${VER}/bookgui/src/resource.cpp ; \
+	 7za a texel$${VER}.7z texel$${VER} ; \
+	 rm -rf texel$${VER})
 
 $(OBJS_DEF) : objdef/%.o : src/%.cpp
 	@mkdir -p $$(dirname $@)

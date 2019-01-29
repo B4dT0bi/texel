@@ -31,6 +31,7 @@
 #include "syzygy/rtb-probe.hpp"
 #include "tbprobe.hpp"
 #include "stloutput.hpp"
+#include "util/timeUtil.hpp"
 
 #include <queue>
 #include <unordered_set>
@@ -128,9 +129,10 @@ const int UNKNOWN_SCORE = -32767; // Represents unknown static eval score
 
 void
 ChessTool::pgnToFen(std::istream& is, int everyNth) {
-    static std::vector<U64> nullHist(200);
+    static std::vector<U64> nullHist(SearchConst::MAX_SEARCH_DEPTH * 2);
     static TranspositionTable tt(19);
-    static ParallelData pd(tt);
+    Notifier notifier;
+    ThreadCommunicator comm(nullptr, notifier);
     static KillerTable kt;
     static History ht;
     static auto et = Evaluate::getEvalHashTables();
@@ -140,7 +142,7 @@ ChessTool::pgnToFen(std::istream& is, int everyNth) {
 
     Position pos;
     const int mate0 = SearchConst::MATE0;
-    Search sc(pos, nullHist, 0, st, pd, nullptr, treeLog);
+    Search sc(pos, nullHist, 0, st, comm, treeLog);
 
     PgnReader reader(is);
     GameTree gt;
@@ -193,6 +195,39 @@ ChessTool::fenToPgn(std::istream& is) {
     for (const std::string& line : lines) {
         Position pos(TextIO::readFEN(line));
         writePGN(pos);
+    }
+}
+
+void
+ChessTool::movesToFen(std::istream& is) {
+    std::vector<std::string> lines = readStream(is);
+    Position startPos(TextIO::readFEN(TextIO::startPosFEN));
+    std::vector<std::string> words;
+    for (const std::string& line : lines) {
+        Position pos(startPos);
+        UndoInfo ui;
+        words.clear();
+        splitString(line, words);
+        bool inSequence = true;
+        bool fenPrinted = false;
+        for (const std::string& word : words) {
+            if (inSequence) {
+                Move move = TextIO::stringToMove(pos, word);
+                if (move.isEmpty()) {
+                    inSequence = false;
+                    std::cout << TextIO::toFEN(pos);
+                    fenPrinted = true;
+                } else {
+                    pos.makeMove(move, ui);
+                }
+            }
+            if (!inSequence) {
+                std::cout << ' ' << word;
+            }
+        }
+        if (!fenPrinted)
+            std::cout << TextIO::toFEN(pos);
+        std::cout << std::endl;
     }
 }
 
@@ -1510,9 +1545,10 @@ ChessTool::qEval(std::vector<PositionInfo>& positions) {
 void
 ChessTool::qEval(std::vector<PositionInfo>& positions, const int beg, const int end) {
     TranspositionTable tt(19);
-    ParallelData pd(tt);
+    Notifier notifier;
+    ThreadCommunicator comm(nullptr, notifier);
 
-    std::vector<U64> nullHist(200);
+    std::vector<U64> nullHist(SearchConst::MAX_SEARCH_DEPTH * 2);
     KillerTable kt;
     History ht;
     std::shared_ptr<Evaluate::EvalHashTables> et;
@@ -1521,14 +1557,14 @@ ChessTool::qEval(std::vector<PositionInfo>& positions, const int beg, const int 
 
     const int chunkSize = 5000;
 
-#pragma omp parallel for default(none) shared(positions,tt,pd) private(kt,ht,et,treeLog,pos) firstprivate(nullHist)
+#pragma omp parallel for default(none) shared(positions,tt,comm) private(kt,ht,et,treeLog,pos) firstprivate(nullHist)
     for (int c = beg; c < end; c += chunkSize) {
         if (!et)
             et = Evaluate::getEvalHashTables();
         Search::SearchTables st(tt, kt, ht, *et);
 
         const int mate0 = SearchConst::MATE0;
-        Search sc(pos, nullHist, 0, st, pd, nullptr, treeLog);
+        Search sc(pos, nullHist, 0, st, comm, treeLog);
 
         for (int i = 0; i < chunkSize; i++) {
             if (c + i >= end)
