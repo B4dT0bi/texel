@@ -1,0 +1,32 @@
+language:
+  - cpp
+
+matrix:
+  include:
+    - os: linux
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+          packages:
+            - g++-5
+            - libstdc++-5-dev
+      env:
+        - MATRIX_EVAL="CC=gcc-5 && CXX=g++-5"
+    - os: osx
+      osx_image: xcode9.2
+      env:
+        - MATRIX_EVAL="CC=gcc && CXX=g++"
+
+before_install:
+  - eval "${MATRIX_EVAL}"
+
+install:
+
+  # verify installed versions
+  - which g++
+  - g++ -v
+
+script:
+  - make 
+  - make texeltest
