@@ -48,3 +48,6 @@ after_success:
   - pwd
   - ls
   - ls objdeftest
+
+notifications:
+  webhooks: https://coveralls.io/webhook
